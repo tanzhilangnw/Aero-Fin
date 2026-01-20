@@ -66,8 +66,7 @@ public class ToolInvocationAspect {
             // 执行目标方法
             result = joinPoint.proceed();
 
-            // 检测是否命中缓存（通过日志判断）
-            // 注意：这是简化实现，生产环境可以通过自定义注解传递缓存状态
+            // 通过 ThreadLocal 检测是否命中缓存
             cacheHit = detectCacheHit(toolName);
 
             return result;
@@ -90,6 +89,9 @@ public class ToolInvocationAspect {
 
             // 3. 上报监控指标
             recordMetrics(toolName, status, executionTime, cacheHit);
+
+            // 4. 清理缓存上下文，避免线程复用导致脏数据
+            ToolCacheContext.clear();
         }
     }
 
@@ -166,13 +168,11 @@ public class ToolInvocationAspect {
     /**
      * 检测是否命中缓存
      * <p>
-     * 简化实现：通过检查日志中是否包含 "Cache HIT"
-     * 生产环境建议使用 ThreadLocal 或自定义注解传递状态
+     * 通过 ThreadLocal 传递的标记判断
+     * 避免依赖日志内容或修改方法签名
      */
     private boolean detectCacheHit(String toolName) {
-        // 这是简化实现，实际可以通过 ThreadLocal 传递
-        // 或者修改 FinancialTools 方法签名返回 ToolCallResult 包装类
-        return false; // 默认未命中
+        return ToolCacheContext.isCacheHit();
     }
 
     /**

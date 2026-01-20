@@ -24,7 +24,7 @@
 
 ### 一句话总结
 
-> **Aero-Fin** 是一个基于 **Spring AI + GPT-4** 的企业级金融信贷智能客服系统，实现了**流式输出、ReAct 思维链、RAG 检索增强、分层记忆管理、断点续聊、MCP 工具标准化**等生产级特性。
+> **Aero-Fin** 是一个基于 **Spring AI** 的金融信贷智能客服系统，实现了 **SSE 流式输出、ReAct + Tool Calling、RAG 检索增强、多Agent协作编排、二阶段反思（ReflectAgent）、分层记忆/会话状态、断点续聊（单机闭环版）、MCP 工具标准化（已落地 calculateLoan）** 等特性。
 
 ### 业务场景
 
@@ -53,7 +53,7 @@ Aero-Fin 解决方案：
 
 ## 核心亮点
 
-### 🎯 11 大核心特性
+### 🎯 12 大核心特性（已对齐当前代码）
 
 | 特性 | 说明 | 技术实现 | 面试亮点 ⭐ |
 |------|------|---------|-----------|
@@ -64,10 +64,11 @@ Aero-Fin 解决方案：
 | **5. RAG 检索** | 向量语义检索增强生成 | Milvus + Embedding | ⭐⭐⭐⭐⭐ |
 | **6. 分层记忆** | 短期/中期/长期三层记忆架构 | 模拟人类记忆模型 + Ebbinghaus 曲线 | ⭐⭐⭐⭐⭐ |
 | **7. 状态管理** | 对话流程 + 槽位填充 | SessionState + UserProfile | ⭐⭐⭐⭐ |
-| **8. MCP 工具** | 标准化工具定义与调用 | 插件化架构 + 动态加载 | ⭐⭐⭐⭐⭐ |
-| **9. 断点续聊** | 会话暂停与跨设备恢复 | 状态快照 + Redis 同步 | ⭐⭐⭐⭐⭐ |
-| **10. 多级缓存** | L1 + L2 分布式缓存 | Caffeine + Redis | ⭐⭐⭐⭐ |
-| **11. 全链路监控** | 工具调用监控与指标上报 | AOP + Prometheus + Agent指标 | ⭐⭐⭐⭐ |
+| **8. MCP 工具** | 标准化工具定义与调用（已将 `calculateLoan` 迁移为 MCP 工具执行） | `McpTool` + `ToolRegistry` + `McpToolAutoRegisterConfig` | ⭐⭐⭐⭐⭐ |
+| **9. 二阶段反思** | 初稿回答后做合规/风险/逻辑二次审阅 | `ReflectAgent` + `REFLECTOR_PROMPT` + `/api/chat/multi-agent/reflect` | ⭐⭐⭐⭐⭐ |
+| **10. 断点续聊** | 会话暂停与恢复（单机闭环版，后续可替换 Redis/DB） | `ResumeConversationService` + SessionSnapshot(内存存储) | ⭐⭐⭐⭐ |
+| **11. 多级缓存** | L1 已落地，L2（Redis）预留 | Caffeine +（Redis TODO） | ⭐⭐⭐⭐ |
+| **12. 全链路监控** | 工具调用监控与指标上报（cache_hit 真实打通） | `ToolInvocationAspect` + `ToolCacheContext` + Prometheus | ⭐⭐⭐⭐ |
 
 ---
 
@@ -84,22 +85,20 @@ Aero-Fin 解决方案：
                      ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                   Controller 层 (ChatController)                  │
-│              • GET /api/chat/stream (SSE 流式接口)                │
-│              • POST /api/session/pause (暂停会话)                 │
-│              • POST /api/session/resume (恢复会话)                │
+│              • GET  /api/chat/stream (SSE 流式接口)               │
+│              • GET  /api/chat/multi-agent/stream (多Agent SSE)    │
+│              • POST /api/chat/multi-agent (多Agent 非流式)        │
+│              • POST /api/chat/multi-agent/reflect (多Agent+反思)  │
 └────────────────────┬─────────────────────────────────────────────┘
                      │
                      ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                  Service 层 (AeroFinAgentService)                 │
 │  ┌───────────────────────────────────────────────────────────┐   │
-│  │ 1. 加载会话状态 (SessionState)                             │   │
-│  │ 2. 获取三层记忆 (LayeredMemoryManager)                     │   │
-│  │    ├─ 短期记忆 (最近 20 条) → 传给 LLM                     │   │
-│  │    ├─ 中期记忆摘要 → 注入 Prompt                           │   │
-│  │    └─ 长期记忆 (用户画像) → 个性化服务                     │   │
+│  │ 1. 加载会话历史 (ConversationService)                      │   │
+│  │ 2. 分层记忆（短期/长期内存 + 中期DB摘要）                   │   │
 │  │ 3. 向量检索相关政策 (VectorSearchService + Milvus)         │   │
-│  │ 4. 构建 ReAct Prompt (System + RAG + Memory)               │   │
+│  │ 4. 构建 ReAct Prompt (System + RAG + History)              │   │
 │  │ 5. 流式调用 ChatClient (Spring AI)                         │   │
 │  │ 6. 保存会话记录 & 更新用户画像                              │   │
 │  └───────────────────────────────────────────────────────────┘   │
@@ -109,14 +108,14 @@ Aero-Fin 解决方案：
          │                          │
          ▼                          ▼
 ┌─────────────────┐        ┌─────────────────────┐
-│  MCP Tools 层   │        │  Memory & State 层  │
-│  (工具调用)      │        │  (记忆与状态管理)    │
+│  MCP Tools 层    │        │  Memory & State 层  │
+│  (标准工具)       │        │  (记忆与状态管理)    │
 ├─────────────────┤        ├─────────────────────┤
 │ • LoanCalculator│        │ • LayeredMemory     │
-│ • PolicyQuery   │        │   - 短期记忆 (L1)    │
-│ • WaiverApply   │        │   - 中期记忆 (L2)    │
-│ (通过 Registry  │        │   - 长期记忆 (L3)    │
-│  动态注册)       │        │ • SessionState      │
+│ • PolicyQuery   │        │   - 短期记忆：内存Map │
+│ • WaiverApply   │        │   - 中期记忆：DB摘要 │
+│ (ToolRegistry + │        │   - 长期记忆：内存Map │
+│  自动注册)       │        │ • SessionState      │
 └────────┬────────┘        │ • UserProfile       │
          │                 └─────────┬───────────┘
          │                           │
@@ -124,8 +123,8 @@ Aero-Fin 解决方案：
 ┌─────────────────────────────────────────────────┐
 │         Distributed Cache Manager (多级缓存)     │
 │   ┌──────────┐              ┌──────────┐        │
-│   │ L1 Cache │   回填        │ L2 Cache │        │
-│   │ Caffeine │◀─────────────│  Redis   │        │
+│   │ L1 Cache │   回填(可选)   │ L2 Cache │        │
+│   │ Caffeine │◀─────────────│  Redis   │(TODO)  │
 │   │  2ms     │              │  10ms    │        │
 │   └──────────┘              └──────────┘        │
 └──────────────────┬──────────────────────────────┘
@@ -266,6 +265,11 @@ Aero-Fin 采用 **Coordinator + Expert Agents** 模式，通过智能路由和�
    - **System Prompt**: `ACTION_SOP_PROMPT`
    - **核心流程**: 5步SOP（校验→提示→确认→执行→反馈）
    - **适用场景**: 罚息减免、投诉处理、业务办理
+
+6. **ReflectAgent (反思专家 - Reflector)**
+   - **System Prompt**: `REFLECTOR_PROMPT`
+   - **核心能力**: 合规/风险/逻辑一致性二次审阅，输出“结论+问题检查+修订版回答”
+   - **适用场景**: 对关键回答（额度/利率/业务办理）做二阶段审阅
 
 #### Prompt Engineering 设计原则
 
@@ -890,7 +894,8 @@ aero-fin/
 │   │       ├── LoanExpertAgent.java       # 贷款专家
 │   │       ├── PolicyExpertAgent.java     # 政策专家
 │   │       ├── RiskAssessmentAgent.java   # 风控专家
-│   │       └── CustomerServiceAgent.java  # 客服专家
+│   │       ├── CustomerServiceAgent.java  # 客服专家
+│   │       └── ReflectAgent.java          # ⭐ 反思专家
 │   ├── memory/                            # 🧠 分层记忆模块
 │   │   ├── MemoryLayer.java               # 三层记忆枚举
 │   │   ├── MemoryUnit.java                # 记忆单元（含衰减算法）
@@ -900,6 +905,7 @@ aero-fin/
 │   │   └── UserProfile.java               # 用户画像
 │   ├── mcp/                               # 🛠️ MCP 工具标准化
 │   │   ├── McpTool.java                   # 工具接口
+│   │   ├── McpToolAutoRegisterConfig.java # MCP 工具自动注册
 │   │   ├── ToolRegistry.java              # 工具注册中心
 │   │   └── tools/
 │   │       └── LoanCalculatorTool.java    # 贷款计算工具
@@ -921,6 +927,7 @@ aero-fin/
 │   ├── tools/                             # 🛠️ 原有工具层
 │   │   └── FinancialTools.java
 │   ├── aspect/                            # 🔍 AOP 监控
+│   │   ├── ToolCacheContext.java          # 缓存命中上下文（ThreadLocal）
 │   │   └── ToolInvocationAspect.java
 │   ├── controller/                        # 🌐 控制器层
 │   │   ├── ChatController.java            # SSE 流式接口
@@ -1109,8 +1116,8 @@ spring:
 ## 📚 相关文档
 
 1. **[README.md](README.md)** - 项目快速开始指南
-2. **[INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md)** - 面试要点详解
-3. **[LAYERED_MEMORY_ARCHITECTURE.md](LAYERED_MEMORY_ARCHITECTURE.md)** - 分层记忆架构深度解析
+2. **[MULTI_AGENT_ARCHITECTURE.md](MULTI_AGENT_ARCHITECTURE.md)** - 多Agent协作架构说明
+3. （TODO）分层记忆架构深度解析文档待补充/迁移
 4. **[QUICK_START.md](QUICK_START.md)** - 5 分钟快速体验
 
 ---

@@ -126,6 +126,9 @@ java -jar target/aero-fin-1.0.0.jar
     - Chat Stream (SSE):    GET  /api/chat/stream?message=你好
     - Chat (Non-Stream):    POST /api/chat
     - Create Session:       POST /api/chat/session
+    - Multi-Agent Stream:   GET  /api/chat/multi-agent/stream?message=你好
+    - Multi-Agent (JSON):   POST /api/chat/multi-agent
+    - Multi-Agent Reflect:  POST /api/chat/multi-agent/reflect
     - Health Check:         GET  /api/chat/health
 ----------------------------------------------------------
 ```
@@ -559,52 +562,15 @@ Removed low-importance memory: memoryId=yyy
 
 ### 测试 12：断点续聊（会话暂停与恢复）
 
-**暂停会话**：
-```bash
-SNAPSHOT_ID=$(curl -s -X POST "http://localhost:8080/api/session/pause?sessionId=$SESSION_ID&userId=user001")
-echo "Snapshot ID: $SNAPSHOT_ID"
-```
-
-**恢复会话**：
-```bash
-curl -X POST "http://localhost:8080/api/session/resume?snapshotId=$SNAPSHOT_ID"
-```
-
-**预期输出**：
-```json
-{
-  "success": true,
-  "sessionId": "SESSION-xxx",
-  "summary": "欢迎回来！\n\n上次对话时间：2024-01-20 15:30\n\n历史会话摘要：\n- 会话开始时间：2024-01-20 15:00\n- 消息总数：15 条\n..."
-}
-```
+当前代码已实现 `ResumeConversationService` 的“暂停/恢复”核心逻辑（含快照存储、过期清理、恢复摘要），但**暂未暴露独立的 HTTP Controller 接口**（TODO：补 `/api/session/pause`、`/api/session/resume`）。你可以先通过 `ChatController` 的对话接口体验主要能力。
 
 ---
 
 ### 测试 13：MCP 工具注册与查询
 
-**查询所有工具**：
-```bash
-curl "http://localhost:8080/api/tools/list"
-```
+当前已实现 MCP 工具自动注册（`McpToolAutoRegisterConfig`），并将 `calculateLoan` 迁移为 MCP 工具执行（`LoanCalculatorTool`）。
 
-**预期输出**：
-```json
-[
-  {
-    "name": "calculateLoan",
-    "category": "financial",
-    "description": "计算贷款月供、总利息等信息",
-    "cacheable": true,
-    "async": false
-  },
-  {
-    "name": "queryPolicy",
-    "category": "financial",
-    "description": "查询金融政策"
-  }
-]
-```
+如需对外提供“工具目录查询接口”（例如 `/api/tools/list`），需要新增一个简单的 Controller（TODO）。
 
 ---
 
@@ -830,7 +796,7 @@ curl -N "http://localhost:8081/api/chat/stream?sessionId=$SESSION_ID&message=测
 完成快速启动后，建议阅读：
 
 1. **[MULTI_AGENT_ARCHITECTURE.md](MULTI_AGENT_ARCHITECTURE.md)** - 多Agent协作架构（⭐ 重要）
-2. **[LAYERED_MEMORY_ARCHITECTURE.md](LAYERED_MEMORY_ARCHITECTURE.md)** - 分层记忆详解
+2. （TODO）分层记忆详解文档待补充/迁移
 3. **[README.md](README.md)** - 项目说明
 4. **[AgentSystemPrompts.java](src/main/java/com/aerofin/config/AgentSystemPrompts.java)** - Prompt Engineering 设计
 

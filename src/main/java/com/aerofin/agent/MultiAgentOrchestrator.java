@@ -4,6 +4,7 @@ import com.aerofin.agent.experts.CustomerServiceAgent;
 import com.aerofin.agent.experts.LoanExpertAgent;
 import com.aerofin.agent.experts.PolicyExpertAgent;
 import com.aerofin.agent.experts.RiskAssessmentAgent;
+import com.aerofin.agent.experts.ReflectAgent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -60,6 +61,7 @@ public class MultiAgentOrchestrator {
     private final PolicyExpertAgent policyExpertAgent;
     private final RiskAssessmentAgent riskAssessmentAgent;
     private final CustomerServiceAgent customerServiceAgent;
+    private final ReflectAgent reflectAgent;
 
     /**
      * Agent注册表（用于快速查找）
@@ -76,6 +78,7 @@ public class MultiAgentOrchestrator {
         agentRegistry.put(AgentRole.POLICY_EXPERT, policyExpertAgent);
         agentRegistry.put(AgentRole.RISK_ASSESSMENT, riskAssessmentAgent);
         agentRegistry.put(AgentRole.CUSTOMER_SERVICE, customerServiceAgent);
+        agentRegistry.put(AgentRole.REFLECTOR, reflectAgent);
 
         log.info("🚀 MultiAgentOrchestrator 初始化完成，注册了 {} 个Agent", agentRegistry.size());
     }
@@ -85,9 +88,10 @@ public class MultiAgentOrchestrator {
      * <p>
      * 执行流程：
      * 1. 协调器识别意图
-     * 2. 路由到专家Agent
-     * 3. 执行任务
-     * 4. 返回结果
+     * 2. 判断是单Agent还是多Agent协作
+     * 3. 路由到专家Agent（单个或多个）
+     * 4. 执行任务
+     * 5. 聚合并返回结果
      *
      * @param userMessage 用户消息
      * @param sessionId   会话ID
@@ -111,20 +115,60 @@ public class MultiAgentOrchestrator {
         // 2. 协调器识别意图并路由
         return coordinatorAgent.execute(userMsg)
                 .flatMap(routingResult -> {
-                    // 获取目标Agent
-                    AgentRole targetRole = AgentRole.valueOf(
-                            routingResult.getData("targetAgent", String.class)
+                    // 判断是否需要多Agent协作
+                    Boolean requiresMultiAgent = routingResult.getData("requiresMultiAgent", Boolean.class);
+
+                    if (Boolean.TRUE.equals(requiresMultiAgent)) {
+                        // 多Agent协作场景
+                        log.info("🔀 [Orchestrator] 多Agent协作模式");
+                        @SuppressWarnings("unchecked")
+                        List<AgentRole> requiredAgents = (List<AgentRole>) routingResult.getData().get("requiredAgents");
+
+                        return processMultiAgentInternal(userMessage, sessionId, userId, requiredAgents);
+                    } else {
+                        // 单Agent场景
+                        AgentRole targetRole = AgentRole.valueOf(
+                                routingResult.getData("targetAgent", String.class)
+                        );
+                        BaseAgent targetAgent = agentRegistry.get(targetRole);
+
+                        log.info("🎯 [Orchestrator] 单Agent路由到: {}", targetRole.getName());
+
+                        // 获取路由消息
+                        @SuppressWarnings("unchecked")
+                        AgentMessage routingMessage = (AgentMessage) routingResult.getData().get("routingMessage");
+
+                        // 执行专家Agent
+                        return targetAgent.execute(routingMessage)
+                                .map(AgentMessage::getContent);
+                    }
+                });
+    }
+
+    /**
+     * 处理用户请求并经过 ReflectAgent 二次审阅（非流式）
+     * <p>
+     * 执行流程：
+     * 1. 正常通过 Coordinator 路由到目标专家 Agent，生成初稿回答
+     * 2. 将 userMessage + draftAnswer 封装为 AgentMessage 发给 ReflectAgent
+     * 3. 返回 ReflectAgent 的审阅结果（其中包含修订版回答）
+     */
+    public Mono<String> processRequestWithReflection(String userMessage, String sessionId, String userId) {
+        return processRequest(userMessage, sessionId, userId)
+                .flatMap(draftAnswer -> {
+                    // 构造发给 ReflectAgent 的消息
+                    AgentMessage reflectMsg = AgentMessage.createTaskAssignment(
+                            AgentRole.COORDINATOR,
+                            AgentRole.REFLECTOR,
+                            "请审阅以下回答的合规性与风险提示是否充分。",
+                            sessionId
                     );
-                    BaseAgent targetAgent = agentRegistry.get(targetRole);
+                    reflectMsg.addData("userId", userId);
+                    reflectMsg.addData("userQuestion", userMessage);
+                    reflectMsg.addData("draftAnswer", draftAnswer);
+                    reflectMsg.addData("sourceAgent", "AUTO"); // 简化：暂不传具体来源
 
-                    log.info("🎯 [Orchestrator] 路由到: {}", targetRole.getName());
-
-                    // 获取路由消息
-                    @SuppressWarnings("unchecked")
-                    AgentMessage routingMessage = (AgentMessage) routingResult.getData().get("routingMessage");
-
-                    // 3. 执行专家Agent
-                    return targetAgent.execute(routingMessage)
+                    return reflectAgent.execute(reflectMsg)
                             .map(AgentMessage::getContent);
                 });
     }
@@ -132,7 +176,7 @@ public class MultiAgentOrchestrator {
     /**
      * 处理用户请求（流式）
      * <p>
-     * 流式输出场景，直接路由到专家Agent进行流式处理
+     * 流式输出场景，支持单Agent和多Agent协作
      *
      * @param userMessage 用户消息
      * @param sessionId   会话ID
@@ -144,28 +188,41 @@ public class MultiAgentOrchestrator {
                 sessionId, userId, userMessage);
 
         return Flux.defer(() -> {
-            // 1. 意图识别
-            AgentRole targetRole = coordinatorAgent.identifyIntent(userMessage);
-            BaseAgent targetAgent = agentRegistry.get(targetRole);
+            // 1. 判断是否需要多Agent协作
+            boolean needMultiAgent = coordinatorAgent.requiresMultiAgent(userMessage);
 
-            log.info("🎯 [Orchestrator] 流式路由到: {}", targetRole.getName());
+            if (needMultiAgent) {
+                // 多Agent协作场景（流式）
+                log.info("🔀 [Orchestrator] 流式多Agent协作模式");
+                List<AgentRole> requiredAgents = coordinatorAgent.identifyRequiredAgents(userMessage);
 
-            // 2. 创建消息
-            AgentMessage message = AgentMessage.createTaskAssignment(
-                    AgentRole.COORDINATOR,
-                    targetRole,
-                    userMessage,
-                    sessionId
-            );
-            message.addData("userId", userId);
+                return Flux.just("正在协调多个专家Agent为您服务...\n\n")
+                        .concatWith(processMultiAgentInternal(userMessage, sessionId, userId, requiredAgents)
+                                .flatMapMany(Flux::just));
+            } else {
+                // 单Agent场景
+                AgentRole targetRole = coordinatorAgent.identifyIntent(userMessage);
+                BaseAgent targetAgent = agentRegistry.get(targetRole);
 
-            // 3. 流式执行
-            return targetAgent.executeStream(message);
+                log.info("🎯 [Orchestrator] 流式路由到: {}", targetRole.getName());
+
+                // 创建消息
+                AgentMessage message = AgentMessage.createTaskAssignment(
+                        AgentRole.COORDINATOR,
+                        targetRole,
+                        userMessage,
+                        sessionId
+                );
+                message.addData("userId", userId);
+
+                // 流式执行
+                return targetAgent.executeStream(message);
+            }
         });
     }
 
     /**
-     * 多Agent协作处理（复杂场景）
+     * 多Agent协作处理（复杂场景）- 公开API
      * <p>
      * 当一个请求需要多个Agent协作时使用
      * 例如："我想贷款20万，有什么优惠政策吗？"
@@ -179,38 +236,68 @@ public class MultiAgentOrchestrator {
     public Mono<String> processMultiAgentRequest(String userMessage, String sessionId, String userId) {
         log.info("🔀 [Orchestrator] 多Agent协作请求: {}", userMessage);
 
-        // 1. 判断需要哪些Agent协作
-        return Flux.fromIterable(agentRegistry.values())
-                .filter(agent -> agent.getRole() != AgentRole.COORDINATOR)
-                .flatMap(agent -> {
+        // 使用协调器识别需要的Agents
+        List<AgentRole> requiredAgents = coordinatorAgent.identifyRequiredAgents(userMessage);
+        return processMultiAgentInternal(userMessage, sessionId, userId, requiredAgents);
+    }
+
+    /**
+     * 多Agent协作处理 - 内部实现
+     * <p>
+     * 根据指定的Agent列表并行执行，并聚合结果
+     *
+     * @param userMessage    用户消息
+     * @param sessionId      会话ID
+     * @param userId         用户ID
+     * @param requiredAgents 需要协作的Agent列表
+     * @return 聚合后的响应
+     */
+    private Mono<String> processMultiAgentInternal(String userMessage, String sessionId,
+                                                     String userId, List<AgentRole> requiredAgents) {
+        log.info("🔀 [Orchestrator] 执行多Agent协作，涉及Agents: {}", requiredAgents);
+
+        // 并行执行所有需要的Agent
+        return Flux.fromIterable(requiredAgents)
+                .flatMap(role -> {
+                    BaseAgent agent = agentRegistry.get(role);
+                    if (agent == null) {
+                        log.warn("[Orchestrator] Agent {} 未注册", role.getName());
+                        return Mono.empty();
+                    }
+
                     // 创建消息
                     AgentMessage message = AgentMessage.createTaskAssignment(
                             AgentRole.COORDINATOR,
-                            agent.getRole(),
+                            role,
                             userMessage,
                             sessionId
                     );
                     message.addData("userId", userId);
 
-                    // 并行执行
+                    // 执行Agent
                     return agent.execute(message)
-                            .map(result -> Map.entry(agent.getRole(), result.getContent()))
+                            .map(result -> Map.entry(role, result.getContent()))
                             .onErrorResume(error -> {
                                 log.warn("[Orchestrator] Agent {} 执行失败: {}",
-                                        agent.getRole().getName(), error.getMessage());
-                                return Mono.empty();
+                                        role.getName(), error.getMessage());
+                                return Mono.just(Map.entry(role,
+                                        String.format("【%s处理失败：%s】", role.getName(), error.getMessage())));
                             });
                 })
                 .collectList()
                 .map(results -> {
-                    // 2. 聚合结果
+                    // 聚合结果
                     StringBuilder aggregated = new StringBuilder();
-                    aggregated.append("以下是多个专家Agent的分析结果：\n\n");
+                    aggregated.append("📋 综合多位专家的分析结果：\n\n");
 
                     results.forEach(entry -> {
-                        aggregated.append("【").append(entry.getKey().getName()).append("】\n");
+                        aggregated.append("━━━━━━━━━━━━━━━━━━━━━━━━\n");
+                        aggregated.append("【").append(entry.getKey().getName()).append("】\n\n");
                         aggregated.append(entry.getValue()).append("\n\n");
                     });
+
+                    aggregated.append("━━━━━━━━━━━━━━━━━━━━━━━━\n");
+                    aggregated.append("以上是 ").append(results.size()).append(" 位专家的综合意见。");
 
                     return aggregated.toString();
                 });

@@ -7,7 +7,7 @@
 
 ## 📋 项目简介
 
-Aero-Fin 是一个**生产级的金融信贷智能客服系统**，基于 Spring AI 和 GPT-4 实现，支持流式输出（打字机效果）、工具调用、向量检索、多轮对话等企业级特性。
+Aero-Fin 是一个**金融信贷智能客服系统**，基于 Spring AI 实现，支持流式输出（SSE）、多 Agent 协作、RAG 向量检索、工具调用（含 MCP 标准化工具）、以及二阶段反思（ReflectAgent）等能力。
 
 ### 🎯 核心特性
 
@@ -15,16 +15,17 @@ Aero-Fin 是一个**生产级的金融信贷智能客服系统**，基于 Spring
 |------|------|----------|
 | **流式输出** | SSE 实时打字机效果 | Spring WebFlux + Server-Sent Events |
 | **ReAct 模式** | 思考-行动-观察闭环 | Prompt Engineering + Function Calling |
-| **工具调用** | 自动执行工具函数 | Spring AI Function Calling (模拟 MCP) |
+| **工具调用** | 自动执行工具函数 | Spring AI Function Calling + MCP 工具适配 |
 | **RAG 检索** | 向量语义检索增强 | Milvus 向量数据库 + Embedding |
 | **会话管理** | 滑动窗口上下文控制 | Token 数量优化 + 缓存策略 |
 | **自我修正** | 检索失败自动重试 | 智能关键词替换 |
 | **多级缓存** | Caffeine + 布隆过滤器 | 缓存穿透保护 + 性能优化 |
 | **监控可观测** | AOP + Prometheus | 工具调用全链路监控 |
+| **二阶段反思** | 对初稿答案做合规/风险审阅 | ReflectAgent + Reflector Prompt |
 
 ---
 
-## 🏗️ 系统架构
+## 🏗️ 系统架构（概览）
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -54,12 +55,11 @@ Aero-Fin 是一个**生产级的金融信贷智能客服系统**，基于 Spring
          │                       │
          ▼                       ▼
 ┌─────────────────┐    ┌─────────────────────┐
-│  Tools 层        │    │  Repository 层       │
-│  FinancialTools │    │  PolicyRepository   │
-│  - calculateLoan│    │  ConversationRepo   │
-│  - queryPolicy  │    │  WaiverAppRepo      │
-│  - applyWaiver  │    └─────────┬───────────┘
-│  (Caffeine缓存) │              │
+│  Tools 层                 │    │  Repository 层       │
+│  FinancialTools (适配层)  │    │  PolicyRepository   │
+│  - calculateLoan → MCP    │    │  ConversationRepo   │
+│  - queryPolicy/apply...   │    │  WaiverAppRepo      │
+│  (Caffeine缓存)           │    └─────────┬───────────┘
 └────────┬────────┘              │
          │                       ▼
          │              ┌─────────────────┐
@@ -227,6 +227,14 @@ curl http://localhost:8080/actuator/health
 # 响应: {"status":"UP"}
 ```
 
+#### 5.4 多Agent + 反思（非流式）
+
+```bash
+curl -X POST "http://localhost:8080/api/chat/multi-agent/reflect" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"我想贷款20万，3年还清，利率4.5%，每月还多少？\",\"userId\":\"user001\"}"
+```
+
 ---
 
 ## 📊 核心功能演示
@@ -370,14 +378,9 @@ aero-fin/
 
 ---
 
-## 💡 面试要点
+## 💡 面试要点（一句话）
 
-详见 [INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md)，包含：
-
-- **技术架构设计思路**
-- **核心功能实现原理**
-- **性能优化策略**
-- **常见面试问题及答案**
+可以重点讲：**Coordinator + Experts 的多 Agent 编排**、**ReAct + 工具调用**、**RAG**、以及新增的 **ReflectAgent 二阶段反思审阅**（合规/风险/逻辑一致性）。
 
 ---
 
@@ -393,7 +396,7 @@ A: 在 `FinancialTools.java` 中添加新方法，并在 `AeroFinAgentService` �
 A: 调整 `application.yml` 中的 `aero-fin.cache.l1.ttl-seconds` 和 `max-size`。
 
 ### Q4: 如何部署到生产环境？
-A: 参考 [DEPLOYMENT.md](DEPLOYMENT.md)（TODO）
+A: 当前仓库未提供完整部署文档（TODO）。
 
 ---
 

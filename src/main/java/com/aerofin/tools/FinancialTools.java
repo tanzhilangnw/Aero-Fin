@@ -1,14 +1,16 @@
 package com.aerofin.tools;
 
 import com.aerofin.config.AeroFinProperties;
+import com.aerofin.aspect.ToolCacheContext;
+import com.aerofin.cache.DistributedCacheManager;
 import com.aerofin.exception.ToolTimeoutException;
+import com.aerofin.mcp.tools.LoanCalculatorTool;
 import com.aerofin.model.entity.Policy;
 import com.aerofin.model.entity.WaiverApplication;
 import com.aerofin.repository.PolicyRepository;
 import com.aerofin.repository.WaiverApplicationRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.benmanes.caffeine.cache.Cache;
 import com.google.common.hash.Hashing;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,9 +53,8 @@ public class FinancialTools {
     private final WaiverApplicationRepository waiverApplicationRepository;
     private final AeroFinProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
-
-    @Qualifier("toolResultCache")
-    private final Cache<String, Object> toolResultCache;
+    private final DistributedCacheManager cacheManager;
+    private final LoanCalculatorTool loanCalculatorTool;
 
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
 
@@ -73,59 +74,31 @@ public class FinancialTools {
      * @return 每月还款额和总利息
      */
     public String calculateLoan(double principal, double annualRate, int termMonths) {
-        // 1. 生成缓存 Key（基于参数 Hash）
-        String cacheKey = generateCacheKey("calculateLoan", principal, annualRate, termMonths);
-
-        // 2. 尝试从缓存获取
-        Object cachedResult = toolResultCache.getIfPresent(cacheKey);
-        if (cachedResult != null) {
-            log.info("✅ Cache HIT for calculateLoan: {}", cacheKey);
-            return (String) cachedResult;
-        }
-
-        log.info("❌ Cache MISS for calculateLoan: {}, calculating...", cacheKey);
-
-        // 3. 模拟耗时计算（关键演示点）
         try {
-            Thread.sleep(500); // 模拟复杂计算耗时
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Calculation interrupted", e);
+            // 迁移到 MCP 工具：LoanCalculatorTool（参数校验 + 结构化结果 + 内置缓存）
+            LoanCalculatorTool.LoanInput input = LoanCalculatorTool.LoanInput.builder()
+                    .principal(principal)
+                    .annualRate(annualRate)
+                    .termMonths(termMonths)
+                    .repaymentType("EQUAL_INSTALLMENT")
+                    .build();
+
+            var toolResult = loanCalculatorTool.execute(input);
+
+            // 将 MCP 缓存命中状态透传给 AOP 监控标签
+            ToolCacheContext.markCacheHit(Boolean.TRUE.equals(toolResult.getCached()));
+
+            if (Boolean.FALSE.equals(toolResult.getSuccess()) || toolResult.getData() == null) {
+                return "贷款计算失败：" + (toolResult.getError() == null ? "未知错误" : toolResult.getError());
+            }
+
+            // 输出保持原有字符串形式，便于当前 Prompt 与前端直接展示
+            return toolResult.getData().toFormattedString();
+        } catch (Exception e) {
+            ToolCacheContext.markCacheHit(false);
+            log.error("calculateLoan (MCP) failed", e);
+            return "贷款计算失败：" + e.getMessage();
         }
-
-        // 4. 执行等额本息计算
-        BigDecimal principalBD = BigDecimal.valueOf(principal);
-        BigDecimal monthlyRate = BigDecimal.valueOf(annualRate / 12);
-
-        // 月还款额 = 本金 × [月利率 × (1+月利率)^期数] / [(1+月利率)^期数 - 1]
-        BigDecimal onePlusRate = monthlyRate.add(BigDecimal.ONE);
-        BigDecimal powResult = onePlusRate.pow(termMonths);
-        BigDecimal monthlyPayment = principalBD
-                .multiply(monthlyRate.multiply(powResult))
-                .divide(powResult.subtract(BigDecimal.ONE), 2, RoundingMode.HALF_UP);
-
-        BigDecimal totalPayment = monthlyPayment.multiply(BigDecimal.valueOf(termMonths));
-        BigDecimal totalInterest = totalPayment.subtract(principalBD);
-
-        String result = String.format(
-                "贷款计算结果：\n" +
-                        "- 贷款本金：%.2f 元\n" +
-                        "- 年利率：%.2f%%\n" +
-                        "- 贷款期限：%d 个月\n" +
-                        "- 月还款额：%.2f 元\n" +
-                        "- 总还款额：%.2f 元\n" +
-                        "- 总利息：%.2f 元",
-                principal, annualRate * 100, termMonths,
-                monthlyPayment.doubleValue(),
-                totalPayment.doubleValue(),
-                totalInterest.doubleValue()
-        );
-
-        // 5. 缓存结果
-        toolResultCache.put(cacheKey, result);
-        log.info("💾 Cached result for: {}", cacheKey);
-
-        return result;
     }
 
     /**

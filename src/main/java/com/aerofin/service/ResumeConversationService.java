@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 断点续聊服务
@@ -42,6 +43,12 @@ public class ResumeConversationService {
     private final LayeredMemoryManager memoryManager;
     private final DistributedCacheManager cacheManager;
     private final ObjectMapper objectMapper;
+
+    /**
+     * 简单的快照存储（进程内），用于在尚未接入 Redis/DB 时完成断点续聊闭环
+     * key: snapshotId，value: SessionSnapshot
+     */
+    private final Map<String, SessionSnapshot> snapshotStore = new ConcurrentHashMap<>();
 
     /**
      * 暂停会话（保存快照）
@@ -85,8 +92,8 @@ public class ResumeConversationService {
 
             // 5. 保存快照到缓存（30 天有效期）
             String snapshotId = "snapshot:" + sessionId;
-            // 生产环境保存到 Redis 或数据库
-            // cacheManager.saveSnapshot(snapshotId, snapshot, Duration.ofDays(30));
+            // 生产环境保存到 Redis 或数据库，这里先使用内存 Map 完成闭环
+            snapshotStore.put(snapshotId, snapshot);
 
             log.info("✅ Session paused successfully: snapshotId={}", snapshotId);
             return snapshotId;
@@ -115,9 +122,7 @@ public class ResumeConversationService {
 
         try {
             // 1. 加载快照（生产环境从 Redis/数据库加载）
-            // SessionSnapshot snapshot = cacheManager.getSnapshot(snapshotId);
-            // 这里使用模拟数据
-            SessionSnapshot snapshot = createMockSnapshot(snapshotId);
+            SessionSnapshot snapshot = snapshotStore.get(snapshotId);
 
             if (snapshot == null) {
                 return ResumeResult.failure("快照不存在或已过期");
@@ -129,7 +134,10 @@ public class ResumeConversationService {
             }
 
             // 3. 恢复会话状态
-            // SessionState.fromSnapshot(snapshot.getSessionStateSnapshot());
+            if (snapshot.getSessionStateSnapshot() != null) {
+                SessionState state = SessionState.fromSnapshot(snapshot.getSessionStateSnapshot());
+                cacheManager.saveSessionState(state);
+            }
 
             // 4. 恢复短期记忆
             if (snapshot.getMemorySnapshot() != null) {
@@ -158,8 +166,7 @@ public class ResumeConversationService {
     public boolean canResumeSession(String sessionId) {
         String snapshotId = "snapshot:" + sessionId;
         // 检查快照是否存在
-        // return cacheManager.hasSnapshot(snapshotId);
-        return true; // 简化实现
+        return snapshotStore.containsKey(snapshotId);
     }
 
     /**
@@ -169,17 +176,7 @@ public class ResumeConversationService {
      */
     public void cleanupExpiredSessions() {
         log.info("🧹 Cleaning up expired sessions...");
-
-        // 查询所有快照
-        // List<String> snapshotIds = cacheManager.getAllSnapshotIds();
-
-        // 删除过期快照
-        // snapshotIds.forEach(snapshotId -> {
-        //     SessionSnapshot snapshot = cacheManager.getSnapshot(snapshotId);
-        //     if (isSnapshotExpired(snapshot)) {
-        //         cacheManager.deleteSnapshot(snapshotId);
-        //     }
-        // });
+        snapshotStore.entrySet().removeIf(e -> isSnapshotExpired(e.getValue()));
 
         log.info("✅ Cleanup completed");
     }
@@ -191,12 +188,19 @@ public class ResumeConversationService {
      * @return 可恢复的会话列表
      */
     public java.util.List<SessionSummary> getRecoverableSessions(String userId) {
-        // 从数据库或缓存查询用户的所有会话快照
-        // return cacheManager.getUserSnapshots(userId).stream()
-        //     .map(this::toSessionSummary)
-        //     .collect(Collectors.toList());
-
-        return java.util.List.of(); // 简化实现
+        java.util.List<SessionSummary> result = new java.util.ArrayList<>();
+        snapshotStore.values().forEach(snapshot -> {
+            if (userId.equals(snapshot.getUserId()) && !isSnapshotExpired(snapshot)) {
+                result.add(SessionSummary.builder()
+                        .sessionId(snapshot.getSessionId())
+                        .title("会话 " + snapshot.getSessionId())
+                        .lastMessageTime(snapshot.getPausedAt())
+                        .messageCount(null)
+                        .preview(null)
+                        .build());
+            }
+        });
+        return result;
     }
 
     // ==================== 辅助方法 ====================
@@ -242,19 +246,6 @@ public class ResumeConversationService {
             log.error("Failed to serialize user profile", e);
             return "{}";
         }
-    }
-
-    /**
-     * 创建模拟快照（用于演示）
-     */
-    private SessionSnapshot createMockSnapshot(String snapshotId) {
-        String sessionId = snapshotId.replace("snapshot:", "");
-        return SessionSnapshot.builder()
-                .sessionId(sessionId)
-                .userId("user001")
-                .pausedAt(LocalDateTime.now().minusHours(2))
-                .memorySnapshot(new HashMap<>())
-                .build();
     }
 
     // ==================== 数据类 ====================

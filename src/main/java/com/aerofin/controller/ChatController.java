@@ -1,5 +1,6 @@
 package com.aerofin.controller;
 
+import com.aerofin.agent.MultiAgentOrchestrator;
 import com.aerofin.model.dto.ChatRequest;
 import com.aerofin.service.AeroFinAgentService;
 import com.aerofin.service.ConversationService;
@@ -10,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 
@@ -37,6 +39,7 @@ import java.time.Duration;
 public class ChatController {
 
     private final AeroFinAgentService agentService;
+    private final MultiAgentOrchestrator multiAgentOrchestrator;
     private final ConversationService conversationService;
 
     /**
@@ -175,6 +178,126 @@ public class ChatController {
         String sessionId = conversationService.createSession(userId);
         log.info("Created session: {} for user: {}", sessionId, userId);
         return sessionId;
+    }
+
+    /**
+     * 多Agent协作流式对话接口（SSE）
+     * <p>
+     * 接口路径：GET /api/chat/multi-agent/stream
+     * 响应类型：text/event-stream（SSE）
+     * <p>
+     * 特点：
+     * 1. 自动判断是否需要多Agent协作
+     * 2. 根据用户消息内容智能路由到单个或多个Agent
+     * 3. 多Agent场景下并行执行并聚合结果
+     * <p>
+     * 面试要点：
+     * - 多Agent协作编排
+     * - 智能意图识别
+     * - 结果聚合策略
+     *
+     * @param message   用户消息
+     * @param sessionId 会话ID（可选）
+     * @param userId    用户ID（可选）
+     */
+    @GetMapping(value = "/multi-agent/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> multiAgentChatStream(
+            @RequestParam String message,
+            @RequestParam(required = false) String sessionId,
+            @RequestParam(required = false) String userId) {
+
+        log.info("Received multi-agent stream request: message={}, sessionId={}, userId={}",
+                truncate(message, 100), sessionId, userId);
+
+        // 1. 如果没有 sessionId，创建新会话
+        String actualSessionId = sessionId;
+        if (actualSessionId == null || actualSessionId.isBlank()) {
+            actualSessionId = conversationService.createSession(userId);
+            log.info("Created new session: {}", actualSessionId);
+        }
+
+        // 2. 如果没有 userId，使用默认值
+        String actualUserId = (userId != null && !userId.isBlank()) ? userId : "anonymous";
+
+        final String finalSessionId = actualSessionId;
+        final String finalUserId = actualUserId;
+
+        // 3. 调用 MultiAgentOrchestrator，自动判断单/多Agent
+        Flux<String> contentStream = multiAgentOrchestrator.processRequestStream(
+                message, finalSessionId, finalUserId);
+
+        // 4. 转换为 SSE 格式
+        return contentStream
+                .map(chunk -> ServerSentEvent.<String>builder()
+                        .id(String.valueOf(System.currentTimeMillis()))
+                        .event("message")
+                        .data(chunk)
+                        .build())
+                .concatWith(Flux.just(
+                        ServerSentEvent.<String>builder()
+                                .event("done")
+                                .data("[DONE]")
+                                .build()
+                ))
+                .mergeWith(Flux.interval(Duration.ofSeconds(30))
+                        .map(tick -> ServerSentEvent.<String>builder()
+                                .event("heartbeat")
+                                .data("ping")
+                                .build())
+                )
+                .doOnComplete(() -> log.info("Multi-agent stream completed for session: {}", finalSessionId))
+                .doOnError(error -> log.error("Multi-agent stream error for session: {}", finalSessionId, error));
+    }
+
+    /**
+     * 多Agent协作对话接口（非流式）
+     * <p>
+     * 接口路径：POST /api/chat/multi-agent
+     * 响应类型：application/json
+     * <p>
+     * 特点：
+     * - 自动判断是否需要多Agent协作
+     * - 返回聚合后的完整结果
+     */
+    @PostMapping("/multi-agent")
+    public String multiAgentChat(@Valid @RequestBody ChatRequest request) {
+        log.info("Received multi-agent request: {}", request);
+
+        String sessionId = request.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            sessionId = conversationService.createSession(request.getUserId());
+        }
+
+        String userId = (request.getUserId() != null && !request.getUserId().isBlank())
+                ? request.getUserId() : "anonymous";
+
+        // 使用 MultiAgentOrchestrator 处理请求
+        return multiAgentOrchestrator.processRequest(request.getMessage(), sessionId, userId)
+                .block();
+    }
+
+    /**
+     * 多Agent + ReflectAgent 二次审阅（非流式）
+     * <p>
+     * 接口路径：POST /api/chat/multi-agent/reflect
+     * <p>
+     * 用途：
+     * - 先由编排器完成正常路由与专家回答（draft）
+     * - 再由 ReflectAgent 对回答做合规/风险/逻辑二次审阅并输出修订版
+     */
+    @PostMapping("/multi-agent/reflect")
+    public Mono<String> multiAgentChatWithReflection(@Valid @RequestBody ChatRequest request) {
+        log.info("Received multi-agent reflect request: {}", request);
+
+        String sessionId = request.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            sessionId = conversationService.createSession(request.getUserId());
+        }
+
+        String userId = (request.getUserId() != null && !request.getUserId().isBlank())
+                ? request.getUserId() : "anonymous";
+
+        return multiAgentOrchestrator.processRequestWithReflection(request.getMessage(), sessionId, userId);
     }
 
     /**

@@ -40,31 +40,50 @@ public class CoordinatorAgent extends BaseAgent {
         return Mono.fromCallable(() -> {
             log.info("[协调器] 分析任务: {}", message.getContent());
 
-            // 1. 意图识别
-            AgentRole targetRole = identifyIntent(message.getContent());
-            log.info("[协调器] 识别意图 -> 路由到: {}", targetRole.getName());
+            // 1. 判断是否需要多Agent协作
+            boolean needMultiAgent = requiresMultiAgent(message.getContent());
+            log.info("[协调器] 多Agent协作判断: {}", needMultiAgent);
 
-            // 2. 创建路由消息
-            AgentMessage routingMessage = AgentMessage.createTaskAssignment(
-                    AgentRole.COORDINATOR,
-                    targetRole,
-                    message.getContent(),
-                    message.getSessionId()
-            );
+            if (needMultiAgent) {
+                // 多Agent协作场景
+                log.info("[协调器] 检测到多Agent协作需求，识别所需Agents...");
+                List<AgentRole> requiredAgents = identifyRequiredAgents(message.getContent());
+                log.info("[协调器] 需要协作的Agents: {}", requiredAgents);
 
-            // 将原始消息的数据传递给目标Agent
-            if (message.getData() != null) {
-                routingMessage.getData().putAll(message.getData());
+                // 返回多Agent协作决策
+                AgentMessage result = message.createResponse("任务需要多Agent协作");
+                result.addData("requiresMultiAgent", true);
+                result.addData("requiredAgents", requiredAgents);
+                result.addData("originalMessage", message.getContent());
+                return result;
+            } else {
+                // 单Agent场景
+                AgentRole targetRole = identifyIntent(message.getContent());
+                log.info("[协调器] 识别意图 -> 路由到: {}", targetRole.getName());
+
+                // 创建路由消息
+                AgentMessage routingMessage = AgentMessage.createTaskAssignment(
+                        AgentRole.COORDINATOR,
+                        targetRole,
+                        message.getContent(),
+                        message.getSessionId()
+                );
+
+                // 将原始消息的数据传递给目标Agent
+                if (message.getData() != null) {
+                    routingMessage.getData().putAll(message.getData());
+                }
+
+                // 返回单Agent路由决策
+                AgentMessage result = message.createResponse(
+                        String.format("任务已路由到 [%s]", targetRole.getName())
+                );
+                result.addData("requiresMultiAgent", false);
+                result.addData("targetAgent", targetRole.name());
+                result.addData("routingMessage", routingMessage);
+
+                return result;
             }
-
-            // 3. 返回路由决策
-            AgentMessage result = message.createResponse(
-                    String.format("任务已路由到 [%s]", targetRole.getName())
-            );
-            result.addData("targetAgent", targetRole.name());
-            result.addData("routingMessage", routingMessage);
-
-            return result;
         });
     }
 
@@ -91,38 +110,81 @@ public class CoordinatorAgent extends BaseAgent {
     }
 
     /**
-     * 意图识别 - 根据用户消息内容推断最合适的Agent
+     * 意图识别 - 根据用户消息内容推断最合适的Agent（单Agent场景）
      * <p>
      * 使用规则+AI混合方式：
      * 1. 优先使用规则匹配（快速、可控）
      * 2. 规则无法判断时，使用AI进行意图识别
      */
     public AgentRole identifyIntent(String userMessage) {
-        // 1. 规则匹配（快速路径）
-        AgentRole ruleBasedRole = AgentRole.inferFromIntent(userMessage);
+        // 复用统一的意图识别逻辑
+        List<AgentRole> allIntents = identifyAllIntents(userMessage);
 
-        // 如果规则匹配返回的不是COORDINATOR，说明匹配成功
-        if (ruleBasedRole != AgentRole.COORDINATOR) {
-            log.debug("[协调器] 规则匹配成功: {} -> {}", userMessage, ruleBasedRole.getName());
-            return ruleBasedRole;
+        // 返回优先级最高的Agent
+        if (!allIntents.isEmpty()) {
+            AgentRole primaryAgent = allIntents.get(0);
+            log.debug("[协调器] 单Agent识别成功: {} -> {}", userMessage, primaryAgent.getName());
+            return primaryAgent;
         }
 
-        // 2. AI意图识别（复杂场景）
-        log.debug("[协调器] 使用AI进行意图识别: {}", userMessage);
+        // 如果没有匹配到任何Agent，默认使用贷款专家
+        log.debug("[协调器] 未识别到明确意图，默认使用贷款专家");
+        return AgentRole.LOAN_EXPERT;
+    }
+
+    /**
+     * 统一的意图识别方法 - 识别用户消息涉及的所有领域
+     * <p>
+     * 使用规则+AI混合方式：
+     * 1. 优先使用规则匹配（快速、可控）
+     * 2. 规则匹配失败或不确定时，使用AI增强识别
+     * <p>
+     * 返回按优先级排序的Agent列表
+     *
+     * @param userMessage 用户消息
+     * @return 涉及的Agent列表（按优先级排序）
+     */
+    private List<AgentRole> identifyAllIntents(String userMessage) {
+        List<AgentRole> agents = new java.util.ArrayList<>();
+
+        // 1. 规则匹配（快速路径）
+        if (userMessage.matches(".*(贷款|月供|利率|计算|还款|本金|利息).*")) {
+            agents.add(AgentRole.LOAN_EXPERT);
+        }
+        if (userMessage.matches(".*(政策|优惠|条件|活动|要求|规定).*")) {
+            agents.add(AgentRole.POLICY_EXPERT);
+        }
+        if (userMessage.matches(".*(额度|审批|征信|资格|能贷|评估).*")) {
+            agents.add(AgentRole.RISK_ASSESSMENT);
+        }
+        if (userMessage.matches(".*(投诉|减免|罚息|申请|办理|修改).*")) {
+            agents.add(AgentRole.CUSTOMER_SERVICE);
+        }
+
+        // 2. 如果规则匹配成功，直接返回
+        if (!agents.isEmpty()) {
+            log.debug("[协调器] 规则匹配成功: {} -> {}", userMessage, agents);
+            return agents;
+        }
+
+        // 3. 规则匹配失败，使用AI意图识别（复杂场景）
+        log.debug("[协调器] 规则匹配失败，使用AI进行意图识别: {}", userMessage);
 
         try {
             String intentPrompt = String.format("""
-                    分析以下用户请求，判断应该路由到哪个专家Agent。
+                    分析以下用户请求，判断需要哪些专家Agent参与处理（可能需要1个或多个）。
 
                     用户请求: %s
 
                     可选Agent:
-                    1. LOAN_EXPERT - 贷款计算、还款咨询
-                    2. POLICY_EXPERT - 政策查询、优惠活动
-                    3. RISK_ASSESSMENT - 风险评估、资格审核
-                    4. CUSTOMER_SERVICE - 投诉处理、罚息减免
+                    1. LOAN_EXPERT - 贷款计算、还款咨询、月供计算
+                    2. POLICY_EXPERT - 政策查询、优惠活动、贷款条件
+                    3. RISK_ASSESSMENT - 风险评估、资格审核、额度评估
+                    4. CUSTOMER_SERVICE - 投诉处理、罚息减免、业务办理
 
-                    只需返回Agent名称（例如: LOAN_EXPERT），不要返回其他内容。
+                    请返回需要的Agent名称，多个用逗号分隔，按优先级排序。
+                    例如: LOAN_EXPERT,POLICY_EXPERT
+                    如果只需要一个，返回: LOAN_EXPERT
                     """, userMessage);
 
             String response = chatClient.prompt()
@@ -132,19 +194,32 @@ public class CoordinatorAgent extends BaseAgent {
                     .trim()
                     .toUpperCase();
 
-            // 解析AI返回的Agent名称
-            try {
-                return AgentRole.valueOf(response);
-            } catch (IllegalArgumentException e) {
-                log.warn("[协调器] AI返回的Agent名称无法识别: {}, 默认使用贷款专家", response);
-                return AgentRole.LOAN_EXPERT;
+            // 解析AI返回的Agent名称列表
+            String[] agentNames = response.split("[,，\\s]+");
+            for (String agentName : agentNames) {
+                try {
+                    AgentRole role = AgentRole.valueOf(agentName.trim());
+                    if (role != AgentRole.COORDINATOR && !agents.contains(role)) {
+                        agents.add(role);
+                    }
+                } catch (IllegalArgumentException e) {
+                    log.warn("[协调器] AI返回的Agent名称无法识别: {}", agentName);
+                }
             }
 
+            log.info("[协调器] AI意图识别结果: {}", agents);
+
         } catch (Exception e) {
-            log.error("[协调器] 意图识别失败", e);
-            // 默认路由到贷款专家
-            return AgentRole.LOAN_EXPERT;
+            log.error("[协调器] AI意图识别失败", e);
         }
+
+        // 4. 如果AI也没有返回结果，兜底使用贷款专家
+        if (agents.isEmpty()) {
+            log.warn("[协调器] 意图识别失败，使用默认Agent: LOAN_EXPERT");
+            agents.add(AgentRole.LOAN_EXPERT);
+        }
+
+        return agents;
     }
 
     /**
@@ -154,11 +229,29 @@ public class CoordinatorAgent extends BaseAgent {
         // 简单规则：如果消息同时包含多个领域关键词，则需要多Agent协作
         int domainCount = 0;
 
-        if (userMessage.matches(".*(贷款|月供|利率).*")) domainCount++;
-        if (userMessage.matches(".*(政策|优惠|条件).*")) domainCount++;
-        if (userMessage.matches(".*(额度|审批|征信).*")) domainCount++;
-        if (userMessage.matches(".*(投诉|减免|罚息).*")) domainCount++;
+        if (userMessage.matches(".*(贷款|月供|利率|计算|还款).*")) domainCount++;
+        if (userMessage.matches(".*(政策|优惠|条件|活动).*")) domainCount++;
+        if (userMessage.matches(".*(额度|审批|征信|资格|能贷).*")) domainCount++;
+        if (userMessage.matches(".*(投诉|减免|罚息|申请).*")) domainCount++;
 
         return domainCount >= 2;
+    }
+
+    /**
+     * 识别需要协作的Agents列表（多Agent场景）
+     * <p>
+     * 复用统一的意图识别逻辑 {@link #identifyAllIntents(String)}
+     * 支持规则匹配 + AI增强识别
+     *
+     * @param userMessage 用户消息
+     * @return 需要的Agent角色列表（按优先级排序）
+     */
+    public List<AgentRole> identifyRequiredAgents(String userMessage) {
+        // 复用统一的意图识别逻辑
+        List<AgentRole> agents = identifyAllIntents(userMessage);
+
+        log.info("[协调器] 多Agent场景识别结果: {} -> {}", userMessage, agents);
+
+        return agents;
     }
 }

@@ -208,8 +208,11 @@ public class AgentMessage {
     }
 
     /**
-     * 生成消息ID
+     * 生成消息ID 
+     * 
      */
+
+    TODO: 分布式id
     private static String generateMessageId() {
         return "MSG-" + System.currentTimeMillis() + "-" +
                 String.format("%06d", (int) (Math.random() * 1000000));

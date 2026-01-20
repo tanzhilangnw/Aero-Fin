@@ -2,7 +2,7 @@
 
 ## 架构概览
 
-Aero-Fin 采用**多专家Agent协作架构**，通过Coordinator（中控）+ Expert Agents（专家）的模式，实现复杂金融业务场景的智能处理。
+Aero-Fin 采用**多专家Agent协作架构**，通过 Coordinator（中控）+ Expert Agents（专家）的模式实现复杂金融业务场景处理；并新增 **ReflectAgent（二阶段反思审阅）**，在专家给出初稿后做合规/风险/逻辑二次检查。
 
 ```
 ┌───────────────────────���─────────────────────────────────────┐
@@ -35,6 +35,11 @@ Aero-Fin 采用**多专家Agent协作架构**，通过Coordinator（中控）+ E
    └─────────────┴────────────────┴───────────────┴─────────────┘
                               ↓
                       结果聚合 & 返回用户
+                              ↓
+                   ┌──────────────────┐
+                   │ ReflectAgent     │
+                   │（二阶段审阅）     │
+                   └──────────────────┘
 ```
 
 ## 核心组件
@@ -47,6 +52,7 @@ Aero-Fin 采用**多专家Agent协作架构**，通过Coordinator（中控）+ E
 - `processRequest()`: 单Agent处理（非流式）
 - `processRequestStream()`: 单Agent处理（流式）
 - `processMultiAgentRequest()`: 多Agent协作处理
+- `processRequestWithReflection()`: 多Agent/单Agent输出后，交给 ReflectAgent 二次审阅（非流式）
 
 **文件**: `src/main/java/com/aerofin/agent/MultiAgentOrchestrator.java`
 
@@ -57,17 +63,38 @@ Aero-Fin 采用**多专家Agent协作架构**，通过Coordinator（中控）+ E
 **角色**: Supervisor - 智能路由中控
 
 **核心能力**:
-1. **强意图识别**: 将复杂自然语言拆解为具体子任务
-2. **智能路由**: 根据意图路由到最合适的专家Agent
+1. **统一意图识别**: 使用规则匹配 + AI增强的混合方式识别意图
+2. **智能路由**: 自动判断单Agent或多Agent协作场景
 3. **复合意图处理**: 支持一个请求同时涉及"查+算+办"
-4. **优先级判断**: 复合意图时按优先级选择主Agent
+4. **优先级排序**: 按业务优先级对Agent进行排序
 
 **System Prompt**: `AgentSystemPrompts.SUPERVISOR_PROMPT`
 
-**路由规则**:
-- 计算优先: 包含具体数字 → CALC
-- 业务优先: 包含办理动词 → ACTION
-- 政策兜底: 无法确定 → POLICY
+**核心方法**:
+- `identifyAllIntents()`: 统一的意图识别方法（规则 + AI）
+  - 返回：List<AgentRole> 按优先级排序
+- `identifyIntent()`: 单Agent场景，返回优先级最高的Agent
+  - 内部调用 `identifyAllIntents()` 并返回第一个
+- `identifyRequiredAgents()`: 多Agent场景，返回所有需要的Agents
+  - 内部调用 `identifyAllIntents()` 并返回完整列表
+- `requiresMultiAgent()`: 判断是否需要多Agent协作
+  - 基于关键词领域计数
+
+**识别流程**:
+```java
+identifyAllIntents(userMessage)
+  ↓
+1. 规则匹配（快速路径）
+   - 4个领域关键词匹配
+   - 返回匹配到的所有Agent
+  ↓
+2. 规则失败 → AI意图识别
+   - 调用LLM分析用户意图
+   - 返回：LOAN_EXPERT,POLICY_EXPERT
+  ↓
+3. AI失败 → 默认兜底
+   - 返回 [LOAN_EXPERT]
+```
 
 **文件**: `src/main/java/com/aerofin/agent/CoordinatorAgent.java`
 
@@ -243,38 +270,80 @@ Aero-Fin 的 Prompt 设计遵循 **强约束 + 明确指令 + 工作流程** 的
 **用户**: "我想贷款20万，3年还清，每月还多少？"
 
 **流程**:
-1. CoordinatorAgent 识别意图 → CALC
-2. LoanExpertAgent 调用 `calculateLoan` 工具
-3. 返回计算结果
+1. CoordinatorAgent 调用 `requiresMultiAgent()` 判断 → false
+2. 识别意图 → LOAN_EXPERT
+3. LoanExpertAgent 调用 `calculateLoan` 工具
+4. 返回计算结果
+
+**触发条件**: 用户消息只包含单一领域关键词
 
 ---
 
-### 场景 2: 复合意图 (Multi-Agent Collaboration)
+### 场景 2: 复合意图 (Multi-Agent Collaboration) ⭐
 
 **用户**: "我想贷款20万，3年还清，有什么优惠政策吗？"
 
 **流程**:
-1. CoordinatorAgent 识别复合意图：计算 + 政策查询
-2. 优先路由到 CALC（计算优先）
-3. LoanExpertAgent 返回计算结果
-4. 标记 `requires_followup: true, followup_agents: ["POLICY"]`
-5. MultiAgentOrchestrator 调用 PolicyExpertAgent
-6. 聚合两个Agent的结果返回
+1. CoordinatorAgent 调用 `requiresMultiAgent()` 判断 → **true**
+   - 检测到关键词：贷款（计算领域）+ 优惠政策（政策领域）
+   - domainCount = 2，触发多Agent协作
+2. CoordinatorAgent 调用 `identifyRequiredAgents()` 识别所需Agents
+   - 返回：[LOAN_EXPERT, POLICY_EXPERT]
+3. MultiAgentOrchestrator 并行执行两个Agent：
+   - LOAN_EXPERT 计算月供
+   - POLICY_EXPERT 查询优惠政策
+4. 聚合结果并返回
 
-**实现方法**: `MultiAgentOrchestrator.processMultiAgentRequest()`
+**实现方法**:
+- `CoordinatorAgent.requiresMultiAgent()`
+- `CoordinatorAgent.identifyRequiredAgents()`
+- `MultiAgentOrchestrator.processMultiAgentInternal()`
+
+**关键代码**:
+```java
+// CoordinatorAgent.java
+public boolean requiresMultiAgent(String userMessage) {
+    int domainCount = 0;
+    if (userMessage.matches(".*(贷款|月供|利率|计算|还款).*")) domainCount++;
+    if (userMessage.matches(".*(政策|优惠|条件|活动).*")) domainCount++;
+    if (userMessage.matches(".*(额度|审批|征信|资格|能贷).*")) domainCount++;
+    if (userMessage.matches(".*(投诉|减免|罚息|申请).*")) domainCount++;
+    return domainCount >= 2; // 跨越2个或以上领域，触发多Agent协作
+}
+```
 
 ---
 
-### 场景 3: Agent间协作
+### 场景 3: 复杂多Agent协作
 
-**用户**: "我能贷多少？如果贷50万，每月还多少？"
+**用户**: "我能贷多少？如果能贷50万，每月还多少？有什么优惠政策？"
 
 **流程**:
-1. CoordinatorAgent → RISK (风控评估)
-2. RiskAssessmentAgent 评估，建议额度 50万
-3. RiskAssessmentAgent 发送协作请求 → CALC
-4. LoanExpertAgent 计算 50万 的月供
-5. 聚合返回完整答案
+1. CoordinatorAgent 判断 → **requiresMultiAgent = true**
+2. 识别需要的Agents: [RISK_ASSESSMENT, LOAN_EXPERT, POLICY_EXPERT]
+3. 并行执行三个Agent:
+   - RISK_ASSESSMENT 评估贷款额度
+   - LOAN_EXPERT 计算月供
+   - POLICY_EXPERT 查询优惠政策
+4. 聚合三个Agent的结果返回综合答案
+
+**触发条件**: 用户消息包含 3 个或以上领域关键词
+
+---
+
+### 多Agent协作触发规则
+
+| 领域 | 关键词 | Agent |
+|-----|--------|-------|
+| 计算领域 | 贷款、月供、利率、计算、还款、本金、利息 | LOAN_EXPERT |
+| 政策领域 | 政策、优惠、条件、活动、要求、规定 | POLICY_EXPERT |
+| 风控领域 | 额度、审批、征信、资格、能贷、评估 | RISK_ASSESSMENT |
+| 客服领域 | 投诉、减免、罚息、申请、办理、修改 | CUSTOMER_SERVICE |
+
+**判断逻辑**:
+- 匹配到 **1 个领域** → 单Agent路由
+- 匹配到 **2 个或以上领域** → 多Agent协作
+- 匹配到 **0 个领域** → 默认路由到 LOAN_EXPERT
 
 ---
 
@@ -349,16 +418,54 @@ public class QualityAssuranceAgent extends BaseAgent {
 
 ---
 
+## 架构优化亮点 ⭐
+
+### 统一意图识别设计
+
+**重构前的问题**:
+- `identifyIntent()` 和 `identifyRequiredAgents()` 有重复逻辑
+- 多Agent场景只使用规则匹配，没有AI增强
+- 代码维护成本高，逻辑不统一
+
+**重构后的改进**:
+```java
+// 统一的底层方法
+private List<AgentRole> identifyAllIntents(String userMessage) {
+    // 1. 规则匹配（快速）
+    // 2. AI增强（智能）
+    // 3. 默认兜底（可靠）
+}
+
+// 单Agent场景复用
+public AgentRole identifyIntent(String userMessage) {
+    return identifyAllIntents(userMessage).get(0);  // 取第一个
+}
+
+// 多Agent场景复用
+public List<AgentRole> identifyRequiredAgents(String userMessage) {
+    return identifyAllIntents(userMessage);  // 返回所有
+}
+```
+
+**优势**:
+1. ✅ **DRY原则**: 消除重复代码，统一意图识别逻辑
+2. ✅ **AI增强**: 多Agent场景也能使用AI识别（非结构化查询）
+3. ✅ **可维护性**: 只需修改一处，两个场景同时受益
+4. ✅ **可扩展性**: 新增领域只需在 `identifyAllIntents()` 中添加规则
+
+---
+
 ## 面试亮点
 
 1. **多Agent协作架构** - Coordinator + Expert 模式
-2. **Prompt Engineering** - 强约束、防幻觉、强制工具调用
-3. **消息驱动通信** - AgentMessage 协议，支持异步协作
-4. **模板方法模式** - BaseAgent 定义标准流程
-5. **SOP标准化** - 业务流程标准化（5步法）
-6. **RAG强制约束** - 严禁幻觉，引用溯源
-7. **性能监控** - 每个Agent自动统计指标
-8. **可扩展性** - 插件化设计，轻松添加新Agent
+2. **统一意图识别** - 规则匹配 + AI增强混合策略（DRY原则）⭐
+3. **Prompt Engineering** - 强约束、防幻觉、强制工具调用
+4. **消息驱动通信** - AgentMessage 协议，支持异步协作
+5. **模板方法模式** - BaseAgent 定义标准流程
+6. **SOP标准化** - 业务流程标准化（5步法）
+7. **RAG强制约束** - 严禁幻觉，引用溯源
+8. **性能监控** - 每个Agent自动统计指标
+9. **可扩展性** - 插件化设计，轻松添加新Agent
 
 ---
 
@@ -370,6 +477,132 @@ public class QualityAssuranceAgent extends BaseAgent {
 - **Caffeine** - L1缓存
 - **Milvus** - 向量数据库（RAG）
 - **MySQL** - 关系型数据库
+
+---
+
+## API 接口使用
+
+### 1. 单Agent模式（原有接口）
+
+**流式接口**:
+```bash
+curl -N "http://localhost:8080/api/chat/stream?message=我想贷款20万，3年还清，每月还多少？"
+```
+
+**非流式接口**:
+```bash
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "我想贷款20万，3年还清，每月还多少？"}'
+```
+
+---
+
+### 2. 多Agent协作模式（新增接口）⭐
+
+**流式接口**:
+```bash
+# 自动判断单/多Agent
+curl -N "http://localhost:8080/api/chat/multi-agent/stream?message=我想贷款20万，有什么优惠政策吗？"
+```
+
+**非流式接口**:
+```bash
+curl -X POST http://localhost:8080/api/chat/multi-agent \
+  -H "Content-Type: application/json" \
+  -d '{"message": "我想贷款20万，有什么优惠政策吗？"}'
+```
+
+---
+
+### 3. 多Agent协作测试示例
+
+#### 示例 1: 贷款计算 + 政策查询
+```bash
+curl -N "http://localhost:8080/api/chat/multi-agent/stream?message=我想贷款20万买房，3年还清，有什么优惠政策吗？"
+```
+
+**预期响应**:
+```
+正在协调多个专家Agent为您服务...
+
+📋 综合多位专家的分析结果：
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+【贷款专家】
+
+根据您的需求计算：
+- 贷款本金：20万元
+- 期限：36个月
+- 月供：约5,923元
+...
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+【政策专家】
+
+当前住房贷款优惠政策：
+1. 首套房利率优惠...
+2. 提前还款无手续费...
+...
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+以上是 2 位专家的综合意见。
+```
+
+#### 示例 2: 风控评估 + 贷款计算
+```bash
+curl -N "http://localhost:8080/api/chat/multi-agent/stream?message=我想知道我能贷多少？如果贷50万每月还多少？"
+```
+
+**预期响应**:
+```
+正在协调多个专家Agent为您服务...
+
+📋 综合多位专家的分析结果：
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+【风控专家】
+
+根据您的信用评估：
+- 建议贷款额度：50-80万元
+- 风险等级：GREEN（低风险）
+...
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+【贷款专家】
+
+50万贷款计算：
+- 月供：约14,808元
+- 总利息：约33,105元
+...
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+以上是 2 位专家的综合意见。
+```
+
+#### 示例 3: 仅单Agent（自动降级）
+```bash
+curl -N "http://localhost:8080/api/chat/multi-agent/stream?message=你好"
+```
+
+**预期响应**:
+```
+您好！我是Aero-Fin智能金融助手...
+```
+（自动降级为单Agent模式，不触发多Agent协作）
+
+---
+
+### 4. 接口对比
+
+| 特性 | `/api/chat/stream` | `/api/chat/multi-agent/stream` |
+|-----|-------------------|-------------------------------|
+| 是否判断多Agent | ❌ 否 | ✅ 是 |
+| 单Agent场景 | ✅ 支持 | ✅ 支持 |
+| 多Agent协作 | ❌ 不支持 | ✅ 支持 |
+| 自动意图识别 | ✅ 支持 | ✅ 支持 |
+| 结果聚合 | N/A | ✅ 支持 |
+| 推荐使用 | 简单场景 | 复杂场景 |
 
 ---
 

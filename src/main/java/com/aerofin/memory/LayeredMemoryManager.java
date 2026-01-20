@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -46,9 +47,9 @@ public class LayeredMemoryManager {
     @Qualifier("sessionCache")
     private final Cache<String, Object> sessionCache;
 
-    // 临时存储（生产环境应使用 Redis）
-    private final Map<String, List<MemoryUnit>> shortTermMemory = new HashMap<>();
-    private final Map<String, UserProfile> longTermMemory = new HashMap<>();
+    // 临时存储（生产环境应使用 Redis），这里使用并发容器避免多线程读写问题
+    private final Map<String, List<MemoryUnit>> shortTermMemory = new ConcurrentHashMap<>();
+    private final Map<String, UserProfile> longTermMemory = new ConcurrentHashMap<>();
 
     /**
      * 添加记忆到短期记忆

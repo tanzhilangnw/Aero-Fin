@@ -1,5 +1,7 @@
 package com.aerofin.state;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -180,10 +182,14 @@ public class SessionState {
      * 创建会话快照（用于断点续聊）
      */
     public String createSnapshot() {
-        // 序列化当前状态为 JSON
-        // 生产环境使用 Jackson 或其他序列化工具
-        this.snapshot = String.format("{\"sessionId\":\"%s\",\"currentState\":\"%s\",\"slots\":%s,\"turnCount\":%d}",
-                sessionId, currentState, slots.toString(), turnCount);
+        // 使用 Jackson 将完整 SessionState 序列化为 JSON，便于后续精确恢复
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            this.snapshot = mapper.writeValueAsString(this);
+        } catch (JsonProcessingException e) {
+            // 序列化失败时降级为简单字符串，避免影响主流程
+            this.snapshot = String.format("{\"sessionId\":\"%s\",\"state\":\"%s\"}", sessionId, currentState);
+        }
         return this.snapshot;
     }
 
@@ -191,11 +197,22 @@ public class SessionState {
      * 从快照恢复会话
      */
     public static SessionState fromSnapshot(String snapshot) {
-        // 反序列化 JSON 为 SessionState
-        // 简化实现，生产环境使用 Jackson
-        return SessionState.builder()
-                .paused(false)
-                .build();
+        if (snapshot == null || snapshot.isEmpty()) {
+            return SessionState.builder().build();
+        }
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            SessionState state = mapper.readValue(snapshot, SessionState.class);
+            // 恢复后默认认为不再处于暂停状态
+            state.setPaused(false);
+            state.setSnapshot(snapshot);
+            return state;
+        } catch (Exception e) {
+            // 反序列化失败时返回一个基础状态，避免整体流程崩溃
+            return SessionState.builder()
+                    .paused(false)
+                    .build();
+        }
     }
 
     /**

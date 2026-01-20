@@ -9,8 +9,9 @@ import lombok.Getter;
  * 1. COORDINATOR - 协调器（任务分发、结果聚合）
  * 2. LOAN_EXPERT - 贷款专家（贷款计算、还款咨询）
  * 3. POLICY_EXPERT - 政策专家（政策查询、RAG检索）
- * 4. RISK_ASSESSMENT - 风控专家（风险评估、资格审核）
- * 5. CUSTOMER_SERVICE - 客服专家（投诉处理、罚息减免）
+     * 4. RISK_ASSESSMENT - 风控专家（风险评估、资格审核）
+     * 5. CUSTOMER_SERVICE - 客服专家（投诉处理、罚息减免）
+     * 6. REFLECTOR - 反思专家（答案审阅与风险合规检查）
  * <p>
  * 面试亮点：
  * - 多Agent协作架构
@@ -95,6 +96,20 @@ public enum AgentRole {
             "客服专家",
             "专注于客户服务和投诉处理",
             0.8
+    ),
+
+    /**
+     * 反思/审阅Agent
+     * <p>
+     * 职责：
+     * - 对其他Agent生成的回答进行二次审阅
+     * - 检查是否存在合规/风险问题
+     * - 在需要时给出修改建议或修订版答案
+     */
+    REFLECTOR(
+            "反思专家",
+            "负责对其他Agent的回答进行审阅和风险合规检查",
+            0.9
     );
 
     /**
