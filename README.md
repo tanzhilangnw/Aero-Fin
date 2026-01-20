@@ -1,4 +1,4 @@
-# 🚀 Aero-Fin - 流式输出的金融信贷智能客服系统
+# 🚀 Aero-Fin - 金融信贷智能客服系统
 
 [![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://www.oracle.com/java/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4-green.svg)](https://spring.io/projects/spring-boot)
