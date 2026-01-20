@@ -132,6 +132,48 @@ java -jar target/aero-fin-1.0.0.jar
 
 ---
 
+## 📐 系统架构说明
+
+Aero-Fin 采用**多Agent协作架构**，通过 Coordinator（中控）+ Expert Agents（专家）的模式处理复杂业务场景。
+
+### 核心Agent角色
+
+1. **CoordinatorAgent (中控)** - 意图识别 + 智能路由
+   - 分析用户请求，识别意图类型
+   - 路由到最合适的专家Agent
+   - 支持复合意图（如：计算+查询）
+
+2. **LoanExpertAgent (贷款专家)** - 强制工具调用
+   - 贷款计算（月供、利息、总还款额）
+   - 禁止大模型心算，必须调用工具
+   - 关键词：贷款、月供、利率、还款
+
+3. **PolicyExpertAgent (政策专家)** - 强制RAG
+   - 政策查询（RAG向量检索）
+   - 严禁幻觉，所有回答必须基于检索context
+   - 关键词：政策、规定、优惠、条件
+
+4. **RiskAssessmentAgent (风控专家)** - 风险评估
+   - 用户风险评估、资格审核
+   - 多维度分析（信用/财务/行为）
+   - 关键词：能否、额度、审批、征信
+
+5. **CustomerServiceAgent (客服专家)** - SOP流程
+   - 业务办理（罚息减免、投诉处理）
+   - 5步SOP：校验→提示→确认→执行→反馈
+   - 关键词：申请、减免、投诉、修改
+
+### 工作流程
+
+```
+用户请求 → CoordinatorAgent → 专家Agent → 返回结果
+            (意图识别)      (执行任务)
+```
+
+详细架构请参考：[MULTI_AGENT_ARCHITECTURE.md](MULTI_AGENT_ARCHITECTURE.md)
+
+---
+
 ## 第 5 步：测试核心功能
 
 ### 🎨 方式 1：Web 测试页面（推荐新手）
@@ -309,9 +351,191 @@ Answer: [返回政策详情]
 
 ---
 
-## 🧪 测试新增功能
+## 🤖 测试多Agent协作功能
 
-### 测试 8：分层记忆（三层记忆架构）
+### 测试 8：意图识别与路由（单一意图）
+
+**测试贷款计算路由**：
+```bash
+curl -N "http://localhost:8080/api/chat/stream?message=贷款30万，5年期，利率5%，每月还多少？"
+```
+
+**预期行为**：
+```
+1. CoordinatorAgent 识别意图 → LOAN_EXPERT (贷款计算)
+2. LoanExpertAgent 调用 calculateLoan 工具
+3. 返回精确计算结果（禁止心算）
+
+输出示例：
+Thought: 用户需要计算贷款月供
+- 本金：300000元
+- 期数：60个月
+- 年利率：5%
+我将调用 calculateLoan 工具进行精确计算...
+
+💰 月供金额：5,659.98 元
+📊 总利息：39,598.80 元
+📈 总还款额：339,598.80 元
+```
+
+---
+
+**测试政策查询路由**：
+```bash
+curl -N "http://localhost:8080/api/chat/stream?message=小微企业贷款有什么优惠政策？"
+```
+
+**预期行为**：
+```
+1. CoordinatorAgent 识别意图 → POLICY_EXPERT (政策查询)
+2. PolicyExpertAgent 执行RAG检索
+3. 基于检索到的context回答（严禁幻觉）
+
+输出特征：
+- ✅ 包含政策编号引用
+- ✅ 标注来源 [依据：...]
+- ✅ 如果检索为空，明确告知"未找到相关政策"
+```
+
+---
+
+**测试风控评估路由**：
+```bash
+curl -N "http://localhost:8080/api/chat/stream?sessionId=SESSION-001&message=我能贷多少钱？"
+```
+
+**预期行为**：
+```
+1. CoordinatorAgent 识别意图 → RISK_ASSESSMENT (风控评估)
+2. RiskAssessmentAgent 分析用户画像
+3. 返回风险等级和建议额度
+
+输出示例：
+🔍 风险评估结果
+
+【风险等级】🟢 低风险 (GREEN)
+【综合评分】85 分
+
+【建议额度】最高 80 万元
+【建议期限】12-36 个月
+【建议利率】4.35%-5.0%
+
+【评估依据】
+✅ 信用记录优秀（无逾期）
+✅ 收入稳定
+⚠️ 征信查询较多
+```
+
+---
+
+**测试业务办理路由**：
+```bash
+curl -N "http://localhost:8080/api/chat/stream?message=我想申请减免300元罚息"
+```
+
+**预期行为**：
+```
+1. CoordinatorAgent 识别意图 → CUSTOMER_SERVICE (业务办理)
+2. CustomerServiceAgent 执行SOP流程：
+   Step 1: 资格校验
+   Step 2: 风险提示
+   Step 3: 等待用户确认
+   Step 4: 执行操作
+   Step 5: 状态反馈
+
+输出特征：
+- ⚠️ 必须包含风险提示
+- ❓ 要求用户确认
+- ✅ 明确告知时效
+```
+
+---
+
+### 测试 9：复合意图处理（多Agent协作）
+
+**场景1：计算 + 政策查询**
+
+```bash
+curl -N "http://localhost:8080/api/chat/stream?message=我想贷款20万，3年还清，有什么优惠政策吗？"
+```
+
+**预期行为**：
+```
+1. CoordinatorAgent 识别复合意图：
+   - 主任务：贷款计算（CALC）
+   - 次任务：政策查询（POLICY）
+
+2. 路由策略：计算优先
+   - 先调用 LoanExpertAgent 计算月供
+   - 标记 requires_followup: true
+   - followup_agents: ["POLICY"]
+
+3. MultiAgentOrchestrator 聚合结果：
+   - 第一部分：计算结果
+   - 第二部分：相关优惠政策
+
+输出示例：
+【贷款计算结果】
+💰 月供：5,923.45 元
+📊 总利息：13,244.20 元
+
+【相关优惠政策】
+找到以下政策：
+1. 小微企业经营贷 (POLICY_LOAN_002)
+   年利率：4.35%-6.5%
+   [依据：小微企业信贷政策 V2.1]
+```
+
+---
+
+**场景2：风控 + 计算**
+
+```bash
+curl -N "http://localhost:8080/api/chat/stream?sessionId=SESSION-002&message=我能贷多少？如果贷50万，每月还多少？"
+```
+
+**预期行为**：
+```
+1. CoordinatorAgent 识别复合意图
+2. RiskAssessmentAgent 评估额度
+3. 发送协作请求给 LoanExpertAgent
+4. 聚合返回完整答案
+```
+
+---
+
+### 测试 10：Agent性能监控
+
+**查看Agent状态摘要**：
+
+```bash
+# 通过JMX或Actuator查看（需要添加对应endpoint）
+curl http://localhost:8080/actuator/metrics/agent.processed.total
+```
+
+**预期输出**：
+```json
+{
+  "贷款专家": {
+    "state": "IDLE",
+    "totalProcessed": 150,
+    "totalErrors": 2,
+    "avgResponseTime": 450
+  },
+  "政策专家": {
+    "state": "IDLE",
+    "totalProcessed": 200,
+    "totalErrors": 0,
+    "avgResponseTime": 320
+  }
+}
+```
+
+---
+
+## 🧪 测试其他新增功能
+
+### 测试 11：分层记忆（三层记忆架构）
 
 **测试短期记忆（最近 10 条消息）**：
 ```bash
@@ -333,7 +557,7 @@ Removed low-importance memory: memoryId=yyy
 
 ---
 
-### 测试 9：断点续聊（会话暂停与恢复）
+### 测试 12：断点续聊（会话暂停与恢复）
 
 **暂停会话**：
 ```bash
@@ -357,7 +581,7 @@ curl -X POST "http://localhost:8080/api/session/resume?snapshotId=$SNAPSHOT_ID"
 
 ---
 
-### 测试 10：MCP 工具注册与查询
+### 测试 13：MCP 工具注册与查询
 
 **查询所有工具**：
 ```bash
@@ -578,7 +802,17 @@ curl -N "http://localhost:8081/api/chat/stream?sessionId=$SESSION_ID&message=测
 - [ ] 多轮对话（会话管理）
 - [ ] 罚息减免申请（数据库写入）
 
-### ✅ 新增功能
+### ✅ 多Agent协作功能
+- [ ] 意图识别与路由（单一意图）
+- [ ] CoordinatorAgent 智能路由
+- [ ] LoanExpertAgent 强制工具调用
+- [ ] PolicyExpertAgent RAG检索（严禁幻觉）
+- [ ] RiskAssessmentAgent 风险评估
+- [ ] CustomerServiceAgent SOP流程
+- [ ] 复合意图处理（多Agent协作）
+- [ ] Agent性能监控
+
+### ✅ 其他新增功能
 - [ ] 缓存优化（命中率 > 80%）
 - [ ] 分层记忆（记忆提升）
 - [ ] 断点续聊（会话恢复）
@@ -595,9 +829,10 @@ curl -N "http://localhost:8081/api/chat/stream?sessionId=$SESSION_ID&message=测
 
 完成快速启动后，建议阅读：
 
-1. **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)** - 项目整体架构
+1. **[MULTI_AGENT_ARCHITECTURE.md](MULTI_AGENT_ARCHITECTURE.md)** - 多Agent协作架构（⭐ 重要）
 2. **[LAYERED_MEMORY_ARCHITECTURE.md](LAYERED_MEMORY_ARCHITECTURE.md)** - 分层记忆详解
-3. **[INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md)** - 面试准备
+3. **[README.md](README.md)** - 项目说明
+4. **[AgentSystemPrompts.java](src/main/java/com/aerofin/config/AgentSystemPrompts.java)** - Prompt Engineering 设计
 
 ---
 
