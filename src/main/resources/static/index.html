@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aero-Fin 智能客服测试页面</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 800px;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .chat-container {
+            height: 500px;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f7f9fc;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            display: flex;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.assistant {
+            justify-content: flex-start;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 15px 20px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .message.assistant .message-content {
+            background: white;
+            color: #333;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        #messageInput:focus {
+            border-color: #667eea;
+        }
+
+        #sendBtn {
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        #sendBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        #sendBtn:active {
+            transform: translateY(0);
+        }
+
+        #sendBtn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .typing-indicator {
+            display: none;
+            align-items: center;
+            gap: 5px;
+            padding: 15px 20px;
+            background: white;
+            border-radius: 18px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: fit-content;
+        }
+
+        .typing-indicator.active {
+            display: flex;
+        }
+
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        .quick-questions {
+            padding: 20px;
+            background: #f7f9fc;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .quick-questions h3 {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .quick-questions button {
+            margin: 5px;
+            padding: 8px 15px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .quick-questions button:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Aero-Fin 智能客服</h1>
+            <p>流式输出 | 工具调用 | RAG 检索增强</p>
+        </div>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="message assistant">
+                <div class="message-content">
+                    你好！我是 Aero-Fin 智能客服助手。<br><br>
+                    我可以帮你：<br>
+                    💰 计算贷款月供<br>
+                    📋 查询金融政策<br>
+                    📝 提交罚息减免申请<br><br>
+                    请问有什么可以帮到你的？
+                </div>
+            </div>
+        </div>
+
+        <div class="quick-questions">
+            <h3>💡 快速提问：</h3>
+            <button onclick="sendQuickQuestion('我想贷款20万，3年还清，利率4.5%，每月还多少？')">贷款计算</button>
+            <button onclick="sendQuickQuestion('有哪些小微企业贷款政策？')">政策查询</button>
+            <button onclick="sendQuickQuestion('我想申请减免500元罚息')">罚息减免</button>
+            <button onclick="sendQuickQuestion('查询申请编号 WAIVER-20240101-ABC123 的状态')">查询进度</button>
+        </div>
+
+        <div class="input-container">
+            <input
+                type="text"
+                id="messageInput"
+                placeholder="输入你的问题..."
+                onkeypress="if(event.key === 'Enter') sendMessage()"
+            />
+            <button id="sendBtn" onclick="sendMessage()">发送</button>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chatContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        let sessionId = null;
+
+        // 发送消息
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // 添加用户消息到界面
+            addMessage('user', message);
+            messageInput.value = '';
+
+            // 禁用发送按钮
+            sendBtn.disabled = true;
+
+            // 显示打字指示器
+            const typingIndicator = addTypingIndicator();
+
+            // 构建请求 URL
+            let url = '/api/chat/stream?message=' + encodeURIComponent(message);
+            if (sessionId) {
+                url += '&sessionId=' + sessionId;
+            }
+
+            // 创建 SSE 连接
+            const eventSource = new EventSource(url);
+            let assistantMessage = null;
+            let fullResponse = '';
+
+            eventSource.addEventListener('message', function(event) {
+                if (!assistantMessage) {
+                    // 移除打字指示器，创建 Assistant 消息
+                    typingIndicator.remove();
+                    assistantMessage = addMessage('assistant', '');
+                }
+
+                // 追加内容
+                fullResponse += event.data;
+                assistantMessage.querySelector('.message-content').textContent = fullResponse;
+
+                // 滚动到底部
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            });
+
+            eventSource.addEventListener('done', function(event) {
+                console.log('Stream completed:', event.data);
+
+                // 提取 sessionId（如果有）
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.sessionId) {
+                        sessionId = data.sessionId;
+                    }
+                } catch (e) {
+                    // [DONE] 消息
+                }
+
+                eventSource.close();
+                sendBtn.disabled = false;
+            });
+
+            eventSource.addEventListener('error', function(event) {
+                console.error('SSE error:', event);
+                if (typingIndicator) typingIndicator.remove();
+                if (!assistantMessage) {
+                    addMessage('assistant', '❌ 抱歉，服务出现异常，请稍后重试。');
+                }
+                eventSource.close();
+                sendBtn.disabled = false;
+            });
+        }
+
+        // 快速提问
+        function sendQuickQuestion(question) {
+            messageInput.value = question;
+            sendMessage();
+        }
+
+        // 添加消息到界面
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+
+            messageDiv.appendChild(contentDiv);
+            chatContainer.appendChild(messageDiv);
+
+            // 滚动到底部
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            return messageDiv;
+        }
+
+        // 添加打字指示器
+        function addTypingIndicator() {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+
+            const indicator = document.createElement('div');
+            indicator.className = 'typing-indicator active';
+            indicator.innerHTML = '<span></span><span></span><span></span>';
+
+            messageDiv.appendChild(indicator);
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            return messageDiv;
+        }
+    </script>
+</body>
+</html>

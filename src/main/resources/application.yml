@@ -1,0 +1,111 @@
+spring:
+  application:
+    name: aero-fin
+
+  # 数据源配置 (OceanBase/MySQL)
+  datasource:
+    url: jdbc:mysql://localhost:3306/aero_fin?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: your_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # Spring AI 配置
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:your-api-key-here}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: gpt-4
+          temperature: 0.7
+          max-tokens: 2000
+          top-p: 0.9
+      embedding:
+        options:
+          model: text-embedding-3-small
+          dimensions: 1536
+
+    # Milvus 向量数据库配置
+    vectorstore:
+      milvus:
+        client:
+          host: localhost
+          port: 19530
+          username: root
+          password: Milvus
+        database-name: aero_fin
+        collection-name: financial_policies
+        embedding-dimension: 1536
+        index-type: IVF_FLAT
+        metric-type: COSINE
+
+# Aero-Fin 自定义配置
+aero-fin:
+  # LLM 配置
+  llm:
+    model: gpt-4
+    temperature: 0.7
+    max-tokens: 2000
+    stream-timeout: 30000
+
+  # 缓存配置
+  cache:
+    # L1 缓存 (Caffeine)
+    l1:
+      ttl-seconds: 600
+      max-size: 10000
+      initial-capacity: 100
+    # 布隆过滤器配置
+    bloom-filter:
+      expected-insertions: 100000
+      fpp: 0.01
+
+  # 向量检索配置
+  vector-store:
+    embedding-dimension: 1536
+    top-k: 5
+    similarity-threshold: 0.7
+    cache-enabled: true
+
+  # 会话管理配置
+  conversation:
+    max-history-size: 20
+    context-window-size: 10
+    session-timeout-minutes: 30
+    enable-sliding-window: true
+
+  # 工具调用配置
+  tools:
+    timeout-millis: 5000
+    enable-async: true
+    enable-retry: true
+    max-retry-attempts: 3
+    retry-delay-millis: 1000
+
+# 监控配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.aerofin: DEBUG
+    org.springframework.ai: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
