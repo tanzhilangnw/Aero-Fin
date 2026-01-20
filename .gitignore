@@ -83,6 +83,3 @@ hs_err_pid*
 
 # Claude Code
 .claude/
-
-# Project documentation (excluded)
-PROJECT_OVERVIEW.md
