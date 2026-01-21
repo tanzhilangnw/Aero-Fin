@@ -1,0 +1,27 @@
+spring:
+  # 数据源配置（测试使用内存数据库H2，或使用测试MySQL）
+  datasource:
+    url: jdbc:mysql://localhost:3306/aero_fin_test?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # Spring AI 配置（测试禁用真实API）
+  ai:
+    openai:
+      api-key: test-key
+      base-url: http://localhost:11434
+      chat:
+        enabled: false  # 禁用真实API调用
+
+logging:
+  level:
+    root: WARN
+    com.aerofin: DEBUG
+
+# Aero-Fin 配置（测试环境）
+aero-fin:
+  security:
+    enabled: false  # 测试环境关闭认证
+  rate-limit:
+    enabled: false  # 测试环境关闭限流

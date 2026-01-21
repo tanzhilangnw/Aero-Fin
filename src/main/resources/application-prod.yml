@@ -1,0 +1,35 @@
+spring:
+  # 数据源配置（生产环境从环境变量读取）
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/aero_fin}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # Spring AI 配置（生产环境使用OpenAI）
+  ai:
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-4}
+          temperature: 0.7
+
+logging:
+  level:
+    root: INFO
+    com.aerofin: INFO
+    org.springframework.ai: WARN
+
+# Aero-Fin 配置（生产环境）
+aero-fin:
+  # 生产环境必须启用安全认证
+  security:
+    enabled: true
+    api-keys: ${AERO_FIN_API_KEYS}  # 必须从环境变量读取
+
+  # 生产环境必须启用限流
+  rate-limit:
+    enabled: true
+    requests-per-minute: ${RATE_LIMIT_RPM:100}
