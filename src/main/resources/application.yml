@@ -88,6 +88,44 @@ aero-fin:
     max-retry-attempts: 3
     retry-delay-millis: 1000
 
+  # 安全配置
+  security:
+    enabled: ${SECURITY_ENABLED:true}
+    api-keys:
+      - sk-aerofin-prod-2024-abc123def456
+      - sk-aerofin-test-2024-xyz789uvw012
+    jwt:
+      secret: ${JWT_SECRET:change-me-in-production}
+      expiration: ${JWT_EXPIRATION:3600000}
+      refresh-expiration: ${JWT_REFRESH_EXPIRATION:604800000}
+
+  # 限流配置
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    requests-per-minute: ${RATE_LIMIT_RPM:60}
+    burst-capacity: ${RATE_LIMIT_BURST:10}
+
+# SpringDoc OpenAPI 配置
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operations-sorter: method
+    tags-sorter: alpha
+  info:
+    title: Aero-Fin API Documentation
+    description: 金融级智能客服系统 - 支持多Agent协作、流式输出、断点续聊
+    version: 1.0.0
+    contact:
+      name: Aero-Fin Team
+      email: support@aerofin.com
+      url: https://github.com/yourusername/aero-fin
+    license:
+      name: Apache 2.0
+  show-actuator: true
+
 # 监控配置
 management:
   endpoints:

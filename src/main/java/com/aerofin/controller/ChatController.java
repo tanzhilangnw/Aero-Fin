@@ -4,16 +4,29 @@ import com.aerofin.agent.MultiAgentOrchestrator;
 import com.aerofin.model.dto.ChatRequest;
 import com.aerofin.service.AeroFinAgentService;
 import com.aerofin.service.ConversationService;
+import com.aerofin.service.ResumeConversationService;
+import com.aerofin.service.ResumeConversationService.ResumeResult;
+import com.aerofin.service.ResumeConversationService.SessionSummary;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * 聊天接口 Controller
@@ -36,11 +49,13 @@ import java.time.Duration;
 @RequestMapping("/api/chat")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*") // 生产环境请配置具体域名
+@Tag(name = "Chat API", description = "智能客服聊天接口 - 支持流式/非流式对话、多Agent协作、断点续聊")
 public class ChatController {
 
     private final AeroFinAgentService agentService;
     private final MultiAgentOrchestrator multiAgentOrchestrator;
     private final ConversationService conversationService;
+    private final ResumeConversationService resumeConversationService;
 
     /**
      * 流式对话接口（SSE）
@@ -66,10 +81,20 @@ public class ChatController {
      * @param sessionId 会话ID（可选）
      * @param userId 用户ID（可选）
      */
+    @Operation(summary = "流式对话接口（SSE）", description = "支持Server-Sent Events实时打字机效果，适用于需要逐字输出的场景")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "成功", content = @Content(mediaType = MediaType.TEXT_EVENT_STREAM_VALUE)),
+            @ApiResponse(responseCode = "400", description = "参数错误"),
+            @ApiResponse(responseCode = "401", description = "未授权 - API Key无效"),
+            @ApiResponse(responseCode = "429", description = "请求过于频繁 - 超过限流阈值")
+    })
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chatStream(
+            @Parameter(description = "用户消息内容", required = true, example = "我想贷款20万，3年还清，每月还多少？")
             @RequestParam String message,
+            @Parameter(description = "会话ID（可选，用于多轮对话）", example = "session-abc123")
             @RequestParam(required = false) String sessionId,
+            @Parameter(description = "用户ID（可选）", example = "user-123")
             @RequestParam(required = false) String userId) {
 
         log.info("Received stream request: message={}, sessionId={}, userId={}",
@@ -301,6 +326,181 @@ public class ChatController {
     }
 
     /**
+     * 暂停会话（保存快照）
+     * <p>
+     * 接口路径：POST /api/chat/session/{sessionId}/pause
+     * 用途：用户离开时保存会话快照，支持之后恢复
+     * <p>
+     * 返回：快照ID（用于恢复时使用）
+     * <p>
+     * 示例：
+     * ```bash
+     * curl -X POST "http://localhost:8080/api/chat/session/session-123/pause?userId=user-456"
+     * ```
+     * 返回：
+     * ```json
+     * {
+     *   "snapshotId": "snapshot:session-123",
+     *   "success": true,
+     *   "message": "会话已暂停"
+     * }
+     * ```
+     */
+    @Operation(summary = "暂停会话", description = "保存当前会话快照，用户可以之后恢复")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "成功暂停会话"),
+            @ApiResponse(responseCode = "500", description = "服务器错误")
+    })
+    @PostMapping("/session/{sessionId}/pause")
+    public Mono<ResponseEntity<PauseSessionResponse>> pauseSession(
+            @Parameter(description = "会话ID", required = true)
+            @PathVariable String sessionId,
+            @Parameter(description = "用户ID（可选）")
+            @RequestParam(required = false) String userId) {
+
+        log.info("⏸️ Pausing session: sessionId={}, userId={}", sessionId, userId);
+
+        return Mono.fromCallable(() -> {
+            try {
+                String snapshotId = resumeConversationService.pauseSession(sessionId, userId);
+                return ResponseEntity.ok(PauseSessionResponse.builder()
+                        .success(true)
+                        .snapshotId(snapshotId)
+                        .message("会话已暂停，快照ID: " + snapshotId)
+                        .build());
+            } catch (Exception e) {
+                log.error("Failed to pause session: sessionId={}", sessionId, e);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(PauseSessionResponse.builder()
+                                .success(false)
+                                .message("暂停会话失败: " + e.getMessage())
+                                .build());
+            }
+        });
+    }
+
+    /**
+     * 恢复会话（加载快照）
+     * <p>
+     * 接口路径：POST /api/chat/session/resume
+     * 用途：通过快照ID恢复之前暂停的会话
+     * <p>
+     * 示例：
+     * ```bash
+     * curl -X POST "http://localhost:8080/api/chat/session/resume?snapshotId=snapshot:session-123"
+     * ```
+     * 返回：
+     * ```json
+     * {
+     *   "success": true,
+     *   "sessionId": "session-123",
+     *   "userId": "user-456",
+     *   "summary": "欢迎回来！\n上次对话时间：2024-01-20 15:30\n请继续您的问题..."
+     * }
+     * ```
+     */
+    @PostMapping("/session/resume")
+    public Mono<ResponseEntity<ResumeResult>> resumeSession(
+            @RequestParam String snapshotId) {
+
+        log.info("▶️ Resuming session: snapshotId={}", snapshotId);
+
+        return Mono.fromCallable(() -> {
+            try {
+                ResumeResult result = resumeConversationService.resumeSession(snapshotId);
+                if (result.getSuccess()) {
+                    return ResponseEntity.ok(result);
+                } else {
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(result);
+                }
+            } catch (Exception e) {
+                log.error("Failed to resume session: snapshotId={}", snapshotId, e);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(ResumeResult.failure("恢复会话失败: " + e.getMessage()));
+            }
+        });
+    }
+
+    /**
+     * 获取用户的可恢复会话列表
+     * <p>
+     * 接口路径：GET /api/chat/sessions/recoverable
+     * 用途：展示用户所有可恢复的历史会话
+     * <p>
+     * 示例：
+     * ```bash
+     * curl "http://localhost:8080/api/chat/sessions/recoverable?userId=user-456"
+     * ```
+     * 返回：
+     * ```json
+     * [
+     *   {
+     *     "sessionId": "session-123",
+     *     "title": "会话 session-123",
+     *     "lastMessageTime": "2024-01-20T15:30:00",
+     *     "messageCount": 10,
+     *     "preview": "上次讨论的主题..."
+     *   }
+     * ]
+     * ```
+     */
+    @GetMapping("/sessions/recoverable")
+    public Mono<ResponseEntity<List<SessionSummary>>> getRecoverableSessions(
+            @RequestParam String userId) {
+
+        log.info("📋 Fetching recoverable sessions for user: {}", userId);
+
+        return Mono.fromCallable(() -> {
+            try {
+                List<SessionSummary> sessions = resumeConversationService.getRecoverableSessions(userId);
+                log.info("Found {} recoverable sessions for user: {}", sessions.size(), userId);
+                return ResponseEntity.ok(sessions);
+            } catch (Exception e) {
+                log.error("Failed to fetch recoverable sessions for user: {}", userId, e);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            }
+        });
+    }
+
+    /**
+     * 检查会话是否可恢复
+     * <p>
+     * 接口路径：GET /api/chat/session/{sessionId}/can-resume
+     * 用途：检查特定会话是否存在快照可用于恢复
+     * <p>
+     * 示例：
+     * ```bash
+     * curl "http://localhost:8080/api/chat/session/session-123/can-resume"
+     * ```
+     * 返回：
+     * ```json
+     * {
+     *   "canResume": true,
+     *   "message": "会话可恢复"
+     * }
+     * ```
+     */
+    @GetMapping("/session/{sessionId}/can-resume")
+    public Mono<ResponseEntity<CanResumeResponse>> canResumeSession(
+            @PathVariable String sessionId) {
+
+        log.info("🔍 Checking if session can be resumed: {}", sessionId);
+
+        return Mono.fromCallable(() -> {
+            try {
+                boolean canResume = resumeConversationService.canResumeSession(sessionId);
+                return ResponseEntity.ok(CanResumeResponse.builder()
+                        .canResume(canResume)
+                        .message(canResume ? "会话可恢复" : "会话不存在或已过期")
+                        .build());
+            } catch (Exception e) {
+                log.error("Failed to check if session can be resumed: {}", sessionId, e);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            }
+        });
+    }
+
+    /**
      * 健康检查
      */
     @GetMapping("/health")
@@ -314,5 +514,32 @@ public class ChatController {
     private String truncate(String str, int maxLength) {
         if (str == null) return null;
         return str.length() > maxLength ? str.substring(0, maxLength) + "..." : str;
+    }
+
+    // ==================== 响应 DTO ====================
+
+    /**
+     * 暂停会话响应
+     */
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class PauseSessionResponse {
+        private Boolean success;
+        private String snapshotId;
+        private String message;
+    }
+
+    /**
+     * 检查会话可恢复性响应
+     */
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class CanResumeResponse {
+        private Boolean canResume;
+        private String message;
     }
 }
