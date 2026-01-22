@@ -55,7 +55,7 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
-        <!-- Spring AI OpenAI -->
+        <!-- Spring AI OpenAI (用于连接 Deepseek，Deepseek 完全兼容 OpenAI API) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
@@ -115,11 +115,14 @@
         </dependency>
 
         <!-- Bucket4j (API限流) -->
+        <!-- TODO: 修复依赖问题 -->
+        <!--
         <dependency>
             <groupId>com.bucket4j</groupId>
             <artifactId>bucket4j-core</artifactId>
             <version>8.7.0</version>
         </dependency>
+        -->
 
         <!-- SpringDoc OpenAPI (API文档) -->
         <dependency>
@@ -138,6 +141,11 @@
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-test</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

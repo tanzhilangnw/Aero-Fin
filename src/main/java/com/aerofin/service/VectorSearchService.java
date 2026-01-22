@@ -76,11 +76,10 @@ public class VectorSearchService {
 
         try {
             // 3. 构建搜索请求
-            SearchRequest searchRequest = SearchRequest.builder()
-                    .query(query)
-                    .topK(properties.getVectorStore().getTopK())
-                    .similarityThreshold(properties.getVectorStore().getSimilarityThreshold())
-                    .build();
+            SearchRequest searchRequest = SearchRequest.defaults()
+                    .withQuery(query)
+                    .withTopK(properties.getVectorStore().getTopK())
+                    .withSimilarityThreshold(properties.getVectorStore().getSimilarityThreshold());
 
             // 4. 执行向量检索
             List<Document> results = vectorStore.similaritySearch(searchRequest);

@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aero-Fin 聊天测试</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            height: 80vh;
+            max-height: 700px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px 12px 0 0;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .status {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 5px 15px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
+            font-size: 12px;
+        }
+
+        .status.connected {
+            background: #4caf50;
+        }
+
+        .status.disconnected {
+            background: #f44336;
+        }
+
+        .chat-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.assistant {
+            justify-content: flex-start;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            word-wrap: break-word;
+            line-height: 1.5;
+        }
+
+        .message.user .message-content {
+            background: #667eea;
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+
+        .message.assistant .message-content {
+            background: #e0e0e0;
+            color: #333;
+            border-bottom-left-radius: 2px;
+        }
+
+        .message.error .message-content {
+            background: #ffebee;
+            color: #c62828;
+            border-left: 3px solid #c62828;
+        }
+
+        .message-time {
+            font-size: 12px;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .input-area {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #eee;
+            border-radius: 0 0 12px 12px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        input[type="text"],
+        input[type="password"],
+        select {
+            flex: 1;
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .config {
+            display: flex;
+            gap: 10px;
+            font-size: 13px;
+        }
+
+        .config-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .config-item input {
+            flex: 0;
+            min-width: 150px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #667eea;
+            animation: typing 1.4s infinite;
+        }
+
+        .loading:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .loading:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                opacity: 0.3;
+                transform: translateY(0);
+            }
+            30% {
+                opacity: 1;
+                transform: translateY(-10px);
+            }
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #1565c0;
+        }
+
+        .error-box {
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #c62828;
+        }
+
+        .clear-btn {
+            background: #f44336;
+            padding: 8px 15px;
+            font-size: 12px;
+        }
+
+        .clear-btn:hover {
+            background: #d32f2f;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Aero-Fin 聊天测试</h1>
+            <p>金融智能客服系统</p>
+            <div class="status connected" id="status">
+                ✓ 已连接
+            </div>
+        </div>
+
+        <div class="chat-area" id="chatArea">
+            <div class="info-box">
+                💡 欢迎使用 Aero-Fin 聊天测试！在下方输入消息开始聊天。
+            </div>
+        </div>
+
+        <div class="input-area">
+            <div class="config">
+                <div class="config-item">
+                    <label>API Key:</label>
+                    <input type="password" id="apiKey" value="sk-aerofin-test-2024-xyz789uvw012" placeholder="输入 API Key">
+                </div>
+                <div class="config-item">
+                    <label>服务器:</label>
+                    <input type="text" id="serverUrl" value="http://localhost:8080" placeholder="http://localhost:8080">
+                </div>
+            </div>
+
+            <div class="input-group" style="margin-top: 10px;">
+                <input type="text" id="messageInput" placeholder="输入消息..." autocomplete="off">
+                <button id="sendBtn" onclick="sendMessage()">发送</button>
+                <button class="clear-btn" onclick="clearChat()">清空</button>
+            </div>
+
+            <div class="input-group">
+                <button style="flex: 1;" onclick="testApi()">🧪 测试 API</button>
+                <button style="flex: 1;" onclick="createSession()">📝 创建会话</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        let isWaiting = false;
+
+        // 页面加载时创建会话
+        window.addEventListener('load', () => {
+            createSession();
+        });
+
+        // 回车发送
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !isWaiting) {
+                sendMessage();
+            }
+        });
+
+        function getApiUrl() {
+            return document.getElementById('serverUrl').value;
+        }
+
+        function getApiKey() {
+            return document.getElementById('apiKey').value;
+        }
+
+        function addMessage(content, role = 'assistant', isLoading = false) {
+            const chatArea = document.getElementById('chatArea');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            if (isLoading) {
+                contentDiv.innerHTML = `<span class="loading"></span><span class="loading"></span><span class="loading"></span>`;
+            } else {
+                contentDiv.textContent = content;
+            }
+
+            messageDiv.appendChild(contentDiv);
+
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'message-time';
+            timeDiv.textContent = new Date().toLocaleTimeString('zh-CN');
+            messageDiv.appendChild(timeDiv);
+
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+
+            return messageDiv;
+        }
+
+        function addErrorMessage(error) {
+            const chatArea = document.getElementById('chatArea');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message error';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = `❌ 错误: ${error}`;
+            messageDiv.appendChild(contentDiv);
+
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        async function testApi() {
+            addMessage('🧪 测试 API 连接...', 'assistant', true);
+            isWaiting = true;
+
+            try {
+                const response = await fetch(`${getApiUrl()}/api/chat/health`);
+                if (response.ok) {
+                    addMessage('✅ API 连接成功！', 'assistant');
+                } else {
+                    addErrorMessage(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                addErrorMessage(error.message);
+            }
+            isWaiting = false;
+        }
+
+        async function createSession() {
+            try {
+                const response = await fetch(`${getApiUrl()}/api/chat/session`, {
+                    method: 'POST',
+                    headers: {
+                        'X-API-Key': getApiKey()
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    sessionId = data.sessionId || data.data?.sessionId;
+                    console.log('✅ 会话创建成功:', sessionId);
+                } else {
+                    console.error('❌ 会话创建失败:', response.status);
+                    addErrorMessage(`创建会话失败: HTTP ${response.status}`);
+                }
+            } catch (error) {
+                console.error('创建会话时出错:', error);
+                addErrorMessage(`创建会话失败: ${error.message}`);
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            // 显示用户消息
+            addMessage(message, 'user');
+            input.value = '';
+
+            if (!sessionId) {
+                addErrorMessage('会话未初始化，请刷新页面');
+                return;
+            }
+
+            isWaiting = true;
+            const loadingMsg = addMessage('', 'assistant', true);
+
+            try {
+                const response = await fetch(`${getApiUrl()}/api/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': getApiKey()
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        sessionId: sessionId
+                    })
+                });
+
+                loadingMsg.remove();
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const reply = data.data?.content || data.content || JSON.stringify(data);
+                    addMessage(reply, 'assistant');
+                } else {
+                    const errorData = await response.text();
+                    addErrorMessage(`HTTP ${response.status}: ${errorData}`);
+                }
+            } catch (error) {
+                loadingMsg.remove();
+                addErrorMessage(error.message);
+            }
+
+            isWaiting = false;
+        }
+
+        function clearChat() {
+            document.getElementById('chatArea').innerHTML = `
+                <div class="info-box">
+                    💡 对话已清空。输入消息继续聊天。
+                </div>
+            `;
+            createSession();
+        }
+    </script>
+</body>
+</html>

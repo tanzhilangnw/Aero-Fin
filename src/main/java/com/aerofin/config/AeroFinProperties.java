@@ -22,10 +22,20 @@ public class AeroFinProperties {
 
     @Data
     public static class LlmConfig {
-        private String model = "gpt-4";
-        private Double temperature = 0.7;
-        private Integer maxTokens = 2000;
+        // Deepseek 配置
+        private DeepseekConfig deepseek = new DeepseekConfig();
+
+        // 流式输出超时配置
         private Long streamTimeout = 30000L;
+
+        @Data
+        public static class DeepseekConfig {
+            private String apiKey = "sk-0c573ebd9a384eb1afb1c2039c6878ec";
+            private String baseUrl = "https://api.deepseek.com";  // 注意：会自动添加 /v1 后缀
+            private String model = "deepseek-chat";  // 或 deepseek-reasoner（R1 推理模型）
+            private Double temperature = 0.7;
+            private Integer maxTokens = 2000;
+        }
     }
 
     @Data

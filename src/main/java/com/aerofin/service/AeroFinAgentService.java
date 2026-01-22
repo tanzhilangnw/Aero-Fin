@@ -170,9 +170,8 @@ public class AeroFinAgentService {
                 .system(enhancedSystemPrompt)
                 .messages(conversationHistory)
                 .user(userMessage)
-                .functions(
-                        "calculateLoan", "queryPolicy", "applyWaiver", "queryWaiverStatus"
-                )
+                // TODO: 启用函数调用（需要先配置 FunctionCallbackContext）
+                // .functions("calculateLoan", "queryPolicy", "applyWaiver", "queryWaiverStatus")
                 .stream()
                 .content()
                 .doOnNext(chunk -> {
@@ -217,9 +216,8 @@ public class AeroFinAgentService {
                 .system(enhancedSystemPrompt)
                 .messages(conversationHistory)
                 .user(userMessage)
-                .functions(
-                        "calculateLoan", "queryPolicy", "applyWaiver", "queryWaiverStatus"
-                )
+                // TODO: 启用函数调用（需要先配置 FunctionCallbackContext）
+                // .functions("calculateLoan", "queryPolicy", "applyWaiver", "queryWaiverStatus")
                 .call()
                 .content();
 

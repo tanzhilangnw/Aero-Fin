@@ -37,7 +37,10 @@ import java.net.UnknownHostException;
  * @author Aero-Fin Team
  */
 @Slf4j
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+        org.springframework.ai.autoconfigure.vectorstore.milvus.MilvusVectorStoreAutoConfiguration.class,
+        org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration.class
+})
 public class AeroFinApplication {
 
     public static void main(String[] args) throws UnknownHostException {

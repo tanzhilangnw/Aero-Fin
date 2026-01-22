@@ -114,18 +114,23 @@ public class RiskAssessmentAgent extends BaseAgent {
         if (userProfile != null) {
             prompt.append("--- 用户画像 ---\n");
             prompt.append("用户ID: ").append(userProfile.getUserId()).append("\n");
-            prompt.append("年龄: ").append(userProfile.getAge()).append("\n");
-            prompt.append("职业: ").append(userProfile.getOccupation()).append("\n");
-            prompt.append("收入范围: ").append(userProfile.getIncomeRange()).append("\n");
-            prompt.append("注册天数: ").append(userProfile.getRegistrationDays()).append("\n");
-            prompt.append("会话总数: ").append(userProfile.getInteractionStats().get("sessionCount")).append("\n");
-            prompt.append("工具使用次数: ").append(userProfile.getInteractionStats().get("toolUsageCount")).append("\n");
+
+            if (userProfile.getDemographics() != null) {
+                prompt.append("年龄范围: ").append(userProfile.getDemographics().getAgeRange()).append("\n");
+                prompt.append("职业: ").append(userProfile.getDemographics().getOccupation()).append("\n");
+            }
+
+            if (userProfile.getInteractionStats() != null) {
+                prompt.append("总会话数: ").append(userProfile.getInteractionStats().getTotalSessions()).append("\n");
+                prompt.append("总消息数: ").append(userProfile.getInteractionStats().getTotalMessages()).append("\n");
+            }
 
             // 风险画像
             if (userProfile.getRiskProfile() != null) {
                 prompt.append("\n风险画像:\n");
-                userProfile.getRiskProfile().forEach((key, value) ->
-                        prompt.append("- ").append(key).append(": ").append(value).append("\n"));
+                prompt.append("- 信用评分: ").append(userProfile.getRiskProfile().getCreditScore()).append("\n");
+                prompt.append("- 风险等级: ").append(userProfile.getRiskProfile().getRiskLevel()).append("\n");
+                prompt.append("- 逾期次数: ").append(userProfile.getRiskProfile().getOverdueCount()).append("\n");
             }
 
             prompt.append("--- 画像结束 ---\n\n");

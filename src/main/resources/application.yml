@@ -4,9 +4,9 @@ spring:
 
   # 数据源配置 (OceanBase/MySQL)
   datasource:
-    url: jdbc:mysql://localhost:3306/aero_fin?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/aero_fin?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
-    password: your_password
+    password: Aero2024
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
@@ -15,22 +15,13 @@ spring:
       idle-timeout: 600000
       max-lifetime: 1800000
 
-  # Spring AI 配置
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY:your-api-key-here}
-      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      api-key: sk-0c573ebd9a384eb1afb1c2039c6878ec
+      base-url: https://api.deepseek.com
       chat:
         options:
-          model: gpt-4
-          temperature: 0.7
-          max-tokens: 2000
-          top-p: 0.9
-      embedding:
-        options:
-          model: text-embedding-3-small
-          dimensions: 1536
-
+          model: deepseek-chat
     # Milvus 向量数据库配置
     vectorstore:
       milvus:
@@ -47,11 +38,14 @@ spring:
 
 # Aero-Fin 自定义配置
 aero-fin:
-  # LLM 配置
+  # LLM 配置（仅使用 Deepseek）
   llm:
-    model: gpt-4
-    temperature: 0.7
-    max-tokens: 2000
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY:sk-0c573ebd9a384eb1afb1c2039c6878ec}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      model: ${DEEPSEEK_MODEL:deepseek-chat}
+      temperature: 0.7
+      max-tokens: 2000
     stream-timeout: 30000
 
   # 缓存配置

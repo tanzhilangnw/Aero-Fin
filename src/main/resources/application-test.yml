@@ -6,13 +6,20 @@ spring:
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
 
-  # Spring AI 配置（测试禁用真实API）
+  # Spring AI 配置（测试环境）
   ai:
-    openai:
-      api-key: test-key
-      base-url: http://localhost:11434
-      chat:
-        enabled: false  # 禁用真实API调用
+    vectorstore:
+      milvus:
+        client:
+          host: localhost
+          port: 19530
+          username: root
+          password: Milvus
+        database-name: aero_fin_test
+        collection-name: financial_policies_test
+        embedding-dimension: 1536
+        index-type: IVF_FLAT
+        metric-type: COSINE
 
 logging:
   level:
@@ -21,6 +28,16 @@ logging:
 
 # Aero-Fin 配置（测试环境）
 aero-fin:
+  # LLM 配置（测试环境使用mock或本地Deepseek）
+  llm:
+    deepseek:
+      api-key: test-key-deepseek
+      base-url: http://localhost:11434  # 可使用本地模型或mock服务
+      model: deepseek-chat
+      temperature: 0.7
+      max-tokens: 1000
+    stream-timeout: 10000
+
   security:
     enabled: false  # 测试环境关闭认证
   rate-limit:
