@@ -83,3 +83,8 @@ hs_err_pid*
 
 # Claude Code
 .claude/
+
+
+# 忽略特定的文档文件
+INTERVIEW_PREPARATION_GUIDE.md
+MULTI_AGENT_ARCHITECTURE.md
