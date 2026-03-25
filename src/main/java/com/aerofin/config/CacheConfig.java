@@ -9,6 +9,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -18,12 +22,14 @@ import java.time.Duration;
  * <p>
  * 实现多级缓存策略：
  * - L1 缓存：Caffeine（进程内高速缓存）
+ * - L2 缓存：Redis（分布式共享缓存）
  * - 布隆过滤器：防止缓存穿透
  * <p>
  * 面试亮点：
  * 1. Caffeine 性能优于 Guava Cache (基于 Window TinyLFU 算法)
- * 2. 布隆过滤器解决缓存穿透问题
- * 3. 可配置的过期策略和容量限制
+ * 2. Redis 作为 L2 缓存，支持分布式部署
+ * 3. 布隆过滤器解决缓存穿透问题
+ * 4. 可配置的过期策略和容量限制
  *
  * @author Aero-Fin Team
  */
@@ -134,5 +140,34 @@ public class CacheConfig {
         log.info("Initialized session cache: timeout={}min", sessionTimeout);
 
         return cache;
+    }
+
+    /**
+     * RedisTemplate 配置 (L2 缓存)
+     * <p>
+     * 核心配置：
+     * 1. Key Serializer: StringRedisSerializer
+     * 2. Value Serializer: GenericJackson2JsonRedisSerializer (JSON 格式，通用性好)
+     * 3. 自动开启事务支持
+     */
+    @Bean("redisTemplate")
+    public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory redisConnectionFactory) {
+        RedisTemplate<String, Object> template = new RedisTemplate<>();
+        template.setConnectionFactory(redisConnectionFactory);
+
+        // Key String
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setHashKeySerializer(new StringRedisSerializer());
+
+        // Value JSON
+        template.setValueSerializer(new GenericJackson2JsonRedisSerializer());
+        template.setHashValueSerializer(new GenericJackson2JsonRedisSerializer());
+
+        template.setEnableTransactionSupport(true);
+        template.afterPropertiesSet();
+
+        log.info("Initialized RedisTemplate for L2 cache");
+
+        return template;
     }
 }

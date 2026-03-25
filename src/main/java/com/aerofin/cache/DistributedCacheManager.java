@@ -7,11 +7,11 @@ import com.github.benmanes.caffeine.cache.Cache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 分布式缓存管理器（L1 + L2 缓存架构）
@@ -25,16 +25,6 @@ import java.util.concurrent.TimeUnit;
  * 2. 缓存写入穿透（同时写入 L1 和 L2）
  * 3. 缓存失效策略（TTL + LRU）
  * 4. 缓存预热与更新
- * <p>
- * 面试亮点：
- * - 多级缓存架构（类似 Guava LocalCache + Redis）
- * - 缓存一致性保证（写穿、旁路、写回策略）
- * - 缓存击穿/穿透/雪崩防护
- * - 支持分布式环境（多实例共享缓存）
- * <p>
- * 注意：
- * 本实现提供 Redis 接口定义，具体 Redis 操作需要添加 Spring Data Redis 依赖
- * 如果不使用 Redis，可以继续使用纯 Caffeine 缓存
  *
  * @author Aero-Fin Team
  */
@@ -51,8 +41,8 @@ public class DistributedCacheManager {
 
     private final ObjectMapper objectMapper;
 
-    // Redis 操作接口（生产环境需要注入 RedisTemplate）
-    // private final RedisTemplate<String, Object> redisTemplate;
+    @Qualifier("redisTemplate")
+    private final RedisTemplate<String, Object> redisTemplate;
 
     /**
      * 缓存键前缀
@@ -64,48 +54,33 @@ public class DistributedCacheManager {
 
     // ==================== 会话状态缓存 ====================
 
-    /**
-     * 获取会话状态（多级缓存）
-     * <p>
-     * 读取流程：
-     * 1. 查询 L1 缓存（Caffeine）
-     * 2. 如果未命中，查询 L2 缓存（Redis）
-     * 3. 如果 L2 命中，回填 L1
-     * 4. 如果都未命中，返回空
-     */
     public Optional<SessionState> getSessionState(String sessionId) {
         String cacheKey = SESSION_STATE_PREFIX + sessionId;
 
         // 1. 查询 L1 缓存
         SessionState l1Result = (SessionState) sessionL1Cache.getIfPresent(cacheKey);
         if (l1Result != null) {
-            log.debug("✅ L1 cache HIT for session state: {}", sessionId);
+            log.debug("✅ L1 缓存命中: 会话状态 {}", sessionId);
             return Optional.of(l1Result);
         }
 
         // 2. 查询 L2 缓存（Redis）
-        // 注意：生产环境需要取消注释
-        /*
-        SessionState l2Result = (SessionState) redisTemplate.opsForValue().get(cacheKey);
-        if (l2Result != null) {
-            log.debug("✅ L2 cache HIT for session state: {}", sessionId);
-            // 回填 L1 缓存
-            sessionL1Cache.put(cacheKey, l2Result);
-            return Optional.of(l2Result);
+        try {
+            SessionState l2Result = (SessionState) redisTemplate.opsForValue().get(cacheKey);
+            if (l2Result != null) {
+                log.debug("✅ L2 缓存命中: 会话状态 {}", sessionId);
+                // 回填 L1 缓存
+                sessionL1Cache.put(cacheKey, l2Result);
+                return Optional.of(l2Result);
+            }
+        } catch (Exception e) {
+            log.error("❌ 查询 L2 缓存失败: 会话状态 {}", sessionId, e);
         }
-        */
 
-        log.debug("❌ Cache MISS for session state: {}", sessionId);
+        log.debug("❌ 缓存未命中: 会话状态 {}", sessionId);
         return Optional.empty();
     }
 
-    /**
-     * 保存会话状态（写穿策略）
-     * <p>
-     * 写入流程：
-     * 1. 同时写入 L1 和 L2
-     * 2. L2 设置 TTL（30 分钟）
-     */
     public void saveSessionState(SessionState sessionState) {
         String cacheKey = SESSION_STATE_PREFIX + sessionState.getSessionId();
 
@@ -113,197 +88,164 @@ public class DistributedCacheManager {
         sessionL1Cache.put(cacheKey, sessionState);
 
         // 2. 写入 L2 缓存（Redis）
-        // 注意：生产环境需要取消注释
-        /*
-        redisTemplate.opsForValue().set(cacheKey, sessionState,
-            Duration.ofMinutes(30));
-        */
+        try {
+            redisTemplate.opsForValue().set(cacheKey, sessionState, Duration.ofMinutes(30));
+        } catch (Exception e) {
+            log.error("❌ 写入 L2 缓存失败: 会话状态 {}", sessionState.getSessionId(), e);
+        }
 
-        log.debug("💾 Saved session state to cache: {}", sessionState.getSessionId());
+        log.debug("💾 已保存会话状态到缓存: {}", sessionState.getSessionId());
     }
 
-    /**
-     * 删除会话状态
-     */
     public void deleteSessionState(String sessionId) {
         String cacheKey = SESSION_STATE_PREFIX + sessionId;
-
-        // 删除 L1
         sessionL1Cache.invalidate(cacheKey);
-
-        // 删除 L2（Redis）
-        // redisTemplate.delete(cacheKey);
-
-        log.debug("🗑️ Deleted session state from cache: {}", sessionId);
+        try {
+            redisTemplate.delete(cacheKey);
+        } catch (Exception e) {
+            log.error("❌ 删除 L2 缓存失败: 会话状态 {}", sessionId, e);
+        }
+        log.debug("🗑️ 已从缓存中删除会话状态: {}", sessionId);
     }
 
     // ==================== 用户画像缓存 ====================
 
-    /**
-     * 获取用户画像（长期缓存）
-     */
     public Optional<UserProfile> getUserProfile(String userId) {
         String cacheKey = USER_PROFILE_PREFIX + userId;
 
-        // L1 缓存
         UserProfile l1Result = (UserProfile) l1Cache.getIfPresent(cacheKey);
         if (l1Result != null) {
+            log.debug("✅ L1 缓存命中: 用户画像 {}", userId);
             return Optional.of(l1Result);
         }
 
-        // L2 缓存（Redis）
-        // UserProfile l2Result = (UserProfile) redisTemplate.opsForValue().get(cacheKey);
-        // if (l2Result != null) {
-        //     l1Cache.put(cacheKey, l2Result);
-        //     return Optional.of(l2Result);
-        // }
+        try {
+            UserProfile l2Result = (UserProfile) redisTemplate.opsForValue().get(cacheKey);
+            if (l2Result != null) {
+                log.debug("✅ L2 缓存命中: 用户画像 {}", userId);
+                l1Cache.put(cacheKey, l2Result);
+                return Optional.of(l2Result);
+            }
+        } catch (Exception e) {
+            log.error("❌ 查询 L2 缓存失败: 用户画像 {}", userId, e);
+        }
 
         return Optional.empty();
     }
 
-    /**
-     * 保存用户画像（永久缓存）
-     */
     public void saveUserProfile(UserProfile userProfile) {
         String cacheKey = USER_PROFILE_PREFIX + userProfile.getUserId();
-
-        // L1 缓存
         l1Cache.put(cacheKey, userProfile);
-
-        // L2 缓存（不设置过期时间）
-        // redisTemplate.opsForValue().set(cacheKey, userProfile);
-
-        log.debug("💾 Saved user profile to cache: {}", userProfile.getUserId());
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userProfile);
+        } catch (Exception e) {
+            log.error("❌ 写入 L2 缓存失败: 用户画像 {}", userProfile.getUserId(), e);
+        }
+        log.debug("💾 已保存用户画像到缓存: {}", userProfile.getUserId());
     }
 
     // ==================== 工具结果缓存 ====================
 
-    /**
-     * 获取工具调用结果（高频缓存）
-     */
     public Optional<Object> getToolResult(String toolName, String argsHash) {
         String cacheKey = TOOL_RESULT_PREFIX + toolName + ":" + argsHash;
 
-        // L1 缓存
         Object l1Result = l1Cache.getIfPresent(cacheKey);
         if (l1Result != null) {
-            log.debug("✅ L1 cache HIT for tool result: {}", toolName);
+            log.debug("✅ L1 缓存命中: 工具结果 {}", toolName);
             return Optional.of(l1Result);
         }
 
-        // L2 缓存（Redis）
-        // Object l2Result = redisTemplate.opsForValue().get(cacheKey);
-        // if (l2Result != null) {
-        //     log.debug("✅ L2 cache HIT for tool result: {}", toolName);
-        //     l1Cache.put(cacheKey, l2Result);
-        //     return Optional.of(l2Result);
-        // }
+        try {
+            Object l2Result = redisTemplate.opsForValue().get(cacheKey);
+            if (l2Result != null) {
+                log.debug("✅ L2 缓存命中: 工具结果 {}", toolName);
+                l1Cache.put(cacheKey, l2Result);
+                return Optional.of(l2Result);
+            }
+        } catch (Exception e) {
+            log.error("❌ 查询 L2 缓存失败: 工具结果 {}", toolName, e);
+        }
 
         return Optional.empty();
     }
 
-    /**
-     * 保存工具调用结果（10 分钟 TTL）
-     */
     public void saveToolResult(String toolName, String argsHash, Object result) {
         String cacheKey = TOOL_RESULT_PREFIX + toolName + ":" + argsHash;
-
-        // L1 缓存
         l1Cache.put(cacheKey, result);
-
-        // L2 缓存（10 分钟过期）
-        // redisTemplate.opsForValue().set(cacheKey, result, Duration.ofMinutes(10));
-
-        log.debug("💾 Saved tool result to cache: {}", toolName);
+        try {
+            redisTemplate.opsForValue().set(cacheKey, result, Duration.ofMinutes(10));
+        } catch (Exception e) {
+            log.error("❌ 写入 L2 缓存失败: 工具结果 {}", toolName, e);
+        }
+        log.debug("💾 已保存工具结果到缓存: {}", toolName);
     }
 
-    // ==================== AI 分析结果缓存（高耗时操作）====================
+    // ==================== AI 分析结果缓存 ====================
 
-    /**
-     * 获取 AI 分析结果
-     * <p>
-     * 用于缓存高耗时的 AI 分析任务，如：
-     * - 情感分析
-     * - 意图识别
-     * - 实体提取
-     * - 文本摘要
-     */
     public Optional<Object> getAiAnalysisResult(String analysisType, String contentHash) {
         String cacheKey = AI_ANALYSIS_PREFIX + analysisType + ":" + contentHash;
 
-        // L1 缓存
         Object l1Result = l1Cache.getIfPresent(cacheKey);
         if (l1Result != null) {
-            log.debug("✅ L1 cache HIT for AI analysis: {}", analysisType);
+            log.debug("✅ L1 缓存命中: AI 分析 {}", analysisType);
             return Optional.of(l1Result);
         }
 
-        // L2 缓存（Redis）
-        // Object l2Result = redisTemplate.opsForValue().get(cacheKey);
-        // if (l2Result != null) {
-        //     log.debug("✅ L2 cache HIT for AI analysis: {}", analysisType);
-        //     l1Cache.put(cacheKey, l2Result);
-        //     return Optional.of(l2Result);
-        // }
+        try {
+            Object l2Result = redisTemplate.opsForValue().get(cacheKey);
+            if (l2Result != null) {
+                log.debug("✅ L2 缓存命中: AI 分析 {}", analysisType);
+                l1Cache.put(cacheKey, l2Result);
+                return Optional.of(l2Result);
+            }
+        } catch (Exception e) {
+            log.error("❌ 查询 L2 缓存失败: AI 分析 {}", analysisType, e);
+        }
 
         return Optional.empty();
     }
 
-    /**
-     * 保存 AI 分析结果（30 分钟 TTL）
-     */
     public void saveAiAnalysisResult(String analysisType, String contentHash, Object result) {
         String cacheKey = AI_ANALYSIS_PREFIX + analysisType + ":" + contentHash;
-
-        // L1 缓存
         l1Cache.put(cacheKey, result);
-
-        // L2 缓存（30 分钟过期）
-        // redisTemplate.opsForValue().set(cacheKey, result, Duration.ofMinutes(30));
-
-        log.debug("💾 Saved AI analysis result to cache: {}", analysisType);
+        try {
+            redisTemplate.opsForValue().set(cacheKey, result, Duration.ofMinutes(30));
+        } catch (Exception e) {
+            log.error("❌ 写入 L2 缓存失败: AI 分析 {}", analysisType, e);
+        }
+        log.debug("💾 已保存AI分析结果到缓存: {}", analysisType);
     }
 
     // ==================== 缓存管理 ====================
 
-    /**
-     * 预热缓存
-     * <p>
-     * 在系统启动时，将热点数据加载到缓存
-     */
     public void warmupCache() {
-        log.info("🔥 Starting cache warmup...");
-
+        log.info("🔥 开始缓存预热...");
         // 预热用户画像（活跃用户）
         // List<UserProfile> activeUsers = userProfileRepository.findActiveUsers();
         // activeUsers.forEach(this::saveUserProfile);
-
         // 预热常用政策
         // List<Policy> hotPolicies = policyRepository.findHotPolicies();
         // hotPolicies.forEach(policy -> {...});
-
-        log.info("✅ Cache warmup completed");
+        log.info("✅ 缓存预热完成");
     }
 
-    /**
-     * 清空所有缓存
-     */
     public void clearAllCaches() {
         l1Cache.invalidateAll();
         sessionL1Cache.invalidateAll();
-
-        // redisTemplate.delete(redisTemplate.keys("*"));
-
-        log.warn("⚠️ All caches cleared");
+        try {
+            var keys = redisTemplate.keys("*");
+            if (keys != null && !keys.isEmpty()) {
+                redisTemplate.delete(keys);
+            }
+        } catch (Exception e) {
+            log.error("❌ 清空 L2 缓存失败", e);
+        }
+        log.warn("⚠️ 所有缓存已清空");
     }
 
-    /**
-     * 获取缓存统计信息
-     */
     public CacheStatistics getStatistics() {
         var l1Stats = l1Cache.stats();
         var sessionStats = sessionL1Cache.stats();
-
         return CacheStatistics.builder()
                 .l1HitRate(l1Stats.hitRate())
                 .l1EvictionCount(l1Stats.evictionCount())
@@ -311,9 +253,6 @@ public class DistributedCacheManager {
                 .build();
     }
 
-    /**
-     * 缓存统计数据
-     */
     @lombok.Data
     @lombok.Builder
     public static class CacheStatistics {

@@ -4,6 +4,9 @@ import com.aerofin.config.AeroFinProperties;
 import com.aerofin.exception.VectorStoreException;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.google.common.hash.Hashing;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -38,6 +41,7 @@ public class VectorSearchService {
 
     private final VectorStore vectorStore;
     private final AeroFinProperties properties;
+    private final MeterRegistry meterRegistry;
 
     @Qualifier("vectorSearchCache")
     private final Cache<String, Object> vectorSearchCache;
@@ -59,15 +63,15 @@ public class VectorSearchService {
      * @return 相关文档列表
      */
     public List<Document> searchRelevantPolicies(String query) {
-        // 1. 生成缓存 Key
         String cacheKey = generateCacheKey(query);
+        boolean cacheHit = false;
 
-        // 2. 尝试从缓存获取
         if (properties.getVectorStore().getCacheEnabled()) {
-            @SuppressWarnings("unchecked")
             List<Document> cachedResult = (List<Document>) vectorSearchCache.getIfPresent(cacheKey);
             if (cachedResult != null) {
                 log.info("✅ Vector search cache HIT for query: {}", truncate(query, 50));
+                cacheHit = true;
+                recordMetrics("SUCCESS", true, cachedResult.size());
                 return cachedResult;
             }
         }
@@ -75,31 +79,49 @@ public class VectorSearchService {
         log.info("❌ Vector search cache MISS, executing search: {}", truncate(query, 50));
 
         try {
-            // 3. 构建搜索请求
             SearchRequest searchRequest = SearchRequest.defaults()
                     .withQuery(query)
                     .withTopK(properties.getVectorStore().getTopK())
                     .withSimilarityThreshold(properties.getVectorStore().getSimilarityThreshold());
 
-            // 4. 执行向量检索
             List<Document> results = vectorStore.similaritySearch(searchRequest);
 
             log.info("🔍 Vector search completed: found {} documents for query: {}",
                     results.size(), truncate(query, 50));
 
-            // 5. 缓存结果
             if (properties.getVectorStore().getCacheEnabled()) {
                 vectorSearchCache.put(cacheKey, results);
             }
-
+            
+            recordMetrics("SUCCESS", false, results.size());
             return results;
 
         } catch (Exception e) {
             log.error("Vector search failed for query: {}", query, e);
+            recordMetrics("FAILURE", false, 0);
             throw new VectorStoreException("Failed to search vector store: " + e.getMessage(), e);
         }
     }
 
+    private void recordMetrics(String status, boolean cacheHit, int retrievedCount) {
+        try {
+            Counter.builder("aerofin.rag.retrievals")
+                .tag("status", status)
+                .tag("cache_hit", String.valueOf(cacheHit))
+                .description("Total number of RAG retrievals")
+                .register(meterRegistry)
+                .increment();
+
+            DistributionSummary.builder("aerofin.rag.retrieved.documents")
+                .description("Number of documents retrieved per search")
+                .baseUnit("documents")
+                .register(meterRegistry)
+                .record(retrievedCount);
+        } catch (Exception e) {
+            log.error("Failed to record RAG metrics", e);
+        }
+    }
+    
     /**
      * 批量添加文档到向量库
      * <p>

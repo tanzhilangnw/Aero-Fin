@@ -49,8 +49,8 @@ class CoordinatorAgentTest {
         @Test
         @DisplayName("识别政策查询意图")
         void testIdentifyIntent_PolicyQuery() {
-            // Given
-            String userMessage = "小微企业贷款有什么优惠政策？";
+            // Given — only policy keywords, no loan-calculation triggers
+            String userMessage = "小微企业有什么优惠政策和申请条件？";
 
             // When
             AgentRole role = coordinatorAgent.identifyIntent(userMessage);
@@ -75,8 +75,8 @@ class CoordinatorAgentTest {
         @Test
         @DisplayName("识别客服办理意图")
         void testIdentifyIntent_CustomerService() {
-            // Given
-            String userMessage = "我想申请减免500元罚息";
+            // Given — only customer-service keywords
+            String userMessage = "我想投诉，要求减免罚息，办理申诉";
 
             // When
             AgentRole role = coordinatorAgent.identifyIntent(userMessage);

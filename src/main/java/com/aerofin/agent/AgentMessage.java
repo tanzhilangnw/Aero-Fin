@@ -121,7 +121,9 @@ public class AgentMessage {
         /**
          * 错误报告（Agent → Coordinator）
          */
-        ERROR_REPORT
+        ERROR_REPORT,
+
+        TASK_FAILED
     }
 
     /**

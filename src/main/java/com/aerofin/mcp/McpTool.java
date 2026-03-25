@@ -62,58 +62,29 @@ public interface McpTool<I, O> {
     @NoArgsConstructor
     @AllArgsConstructor
     class ToolMetadata {
-        /**
-         * 工具名称（唯一标识）
-         */
+        /** 工具名称（唯一标识） */
         private String name;
-
-        /**
-         * 工具描述（用于 LLM 理解工具用途）
-         */
+        /** 工具描述（用于 LLM 理解工具用途） */
         private String description;
-
-        /**
-         * 工具分类
-         */
+        /** 工具分类 */
         private String category;
-
-        /**
-         * 参数定义（JSON Schema 格式）
-         */
+        /** 参数定义（JSON Schema 格式） */
         private List<ToolParameter> parameters;
-
-        /**
-         * 是否支持异步执行
-         */
+        /** 是否支持异步执行 */
         @Builder.Default
         private Boolean async = false;
-
-        /**
-         * 是否启用缓存
-         */
+        /** 是否启用缓存 */
         @Builder.Default
         private Boolean cacheable = true;
-
-        /**
-         * 预估执行时间（毫秒）
-         */
+        /** 预估执行时间（毫秒） */
         @Builder.Default
         private Long estimatedDuration = 1000L;
-
-        /**
-         * 工具版本
-         */
+        /** 工具版本 */
         @Builder.Default
         private String version = "1.0.0";
-
-        /**
-         * 依赖的其他工具
-         */
+        /** 依赖的其他工具 */
         private List<String> dependencies;
-
-        /**
-         * 标签（用于检索和分类）
-         */
+        /** 标签（用于检索和分类） */
         private List<String> tags;
     }
 
@@ -125,50 +96,15 @@ public interface McpTool<I, O> {
     @NoArgsConstructor
     @AllArgsConstructor
     class ToolParameter {
-        /**
-         * 参数名称
-         */
         private String name;
-
-        /**
-         * 参数类型
-         */
         private String type;
-
-        /**
-         * 参数描述
-         */
         private String description;
-
-        /**
-         * 是否必需
-         */
         @Builder.Default
         private Boolean required = false;
-
-        /**
-         * 默认值
-         */
         private Object defaultValue;
-
-        /**
-         * 枚举值（如果是枚举类型）
-         */
         private List<String> enumValues;
-
-        /**
-         * 验证规则（正则表达式）
-         */
         private String pattern;
-
-        /**
-         * 最小值（数值类型）
-         */
         private Number minimum;
-
-        /**
-         * 最大值（数值类型）
-         */
         private Number maximum;
     }
 
@@ -180,46 +116,16 @@ public interface McpTool<I, O> {
     @NoArgsConstructor
     @AllArgsConstructor
     class ToolResult<T> {
-        /**
-         * 是否成功
-         */
         @Builder.Default
         private Boolean success = true;
-
-        /**
-         * 执行结果数据
-         */
         private T data;
-
-        /**
-         * 错误信息（如果失败）
-         */
         private String error;
-
-        /**
-         * 执行耗时（毫秒）
-         */
         private Long duration;
-
-        /**
-         * 是否命中缓存
-         */
         @Builder.Default
         private Boolean cached = false;
-
-        /**
-         * 元数据（额外信息）
-         */
         private Map<String, Object> metadata;
-
-        /**
-         * 工具调用 ID（用于追踪）
-         */
         private String callId;
 
-        /**
-         * 创建成功结果
-         */
         public static <T> ToolResult<T> success(T data, long duration, boolean cached) {
             return ToolResult.<T>builder()
                     .success(true)
@@ -229,9 +135,6 @@ public interface McpTool<I, O> {
                     .build();
         }
 
-        /**
-         * 创建失败结果
-         */
         public static <T> ToolResult<T> failure(String error, long duration) {
             return ToolResult.<T>builder()
                     .success(false)
@@ -242,36 +145,15 @@ public interface McpTool<I, O> {
     }
 
     /**
-     * MCP 工具注解
-     * <p>
-     * 用于标记工具类，支持自动注册
+     * MCP 工具注解，用于标记工具类，支持自动注册
      */
     @Target(ElementType.TYPE)
     @Retention(RetentionPolicy.RUNTIME)
     @interface Tool {
-        /**
-         * 工具名称
-         */
         String name();
-
-        /**
-         * 工具描述
-         */
         String description();
-
-        /**
-         * 工具分类
-         */
         String category() default "general";
-
-        /**
-         * 是否启用缓存
-         */
         boolean cacheable() default true;
-
-        /**
-         * 是否异步执行
-         */
         boolean async() default false;
     }
 }

@@ -15,6 +15,12 @@ spring:
       idle-timeout: 600000
       max-lifetime: 1800000
 
+  # Redis 配置 (L2 缓存)
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
   ai:
     openai:
       api-key: sk-0c573ebd9a384eb1afb1c2039c6878ec
